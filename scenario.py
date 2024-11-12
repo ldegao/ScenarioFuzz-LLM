@@ -120,12 +120,14 @@ class Scenario:
             "abort_seconds": self.conf.timeout,
             "wait_autoware_num_topics": c.WAIT_AUTOWARE_NUM_NODES
         }
+
         # state_dict = {"fuzzing_start_time": self.conf.cur_time, "determ_seed": self.conf.determ_seed,
         #               "seed": self.seed_data, "weather": self.weather, "autoware_cmd": state.autoware_cmd,
         #               "autoware_goal": state.autoware_goal, "first_frame_id": state.first_frame_id,
         #               "first_sim_elapsed_time": state.first_sim_elapsed_time, "sim_start_time": state.sim_start_time,
         #               "num_frames": state.num_frames, "elapsed_time": state.elapsed_time, "events": event_dict,
         #               "config": config_dict}
+
         state_dict = {"events": event_dict, "config": config_dict}
         filename = "gid:{}_sid:{}.json".format(self.generation_id, self.scenario_id)
         if log_type == "queue":

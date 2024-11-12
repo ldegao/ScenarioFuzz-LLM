@@ -1423,7 +1423,7 @@ def move_images(conf, state):
         # Check if the source file exists
         if os.path.exists(src_file):
             # Move the file to the target directory
-            shutil.move(src_file, dst_file)
+            shutil.copy(src_file, dst_file)
 
 
 def check_serialization(obj):
