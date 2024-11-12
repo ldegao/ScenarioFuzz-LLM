@@ -44,7 +44,7 @@ def monitor_docker_container(image_name, check_interval=10):
 
             match = re.search(r'(\w+)\s+(' + re.escape(image_name) + r')\s+.*\s+(\w+ \w+ ago)\s+(\w+)', output)
             if match and match.group(4) != 'Up':
-                exit(-1)
+                exit(0)
 
             time.sleep(check_interval)
 

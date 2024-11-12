@@ -1,3 +1,4 @@
+import ast
 import glob
 import os
 import random
@@ -93,37 +94,26 @@ def call_gpt4_vision(question: str, image_url: str, max_tokens: int = 100, retri
     return "Request failed after maximum retries."
 
 
-def get_last_frame_data(json_path):
+def get_frame_data(json_path, default_frame_number=-1):
     with open(json_path, 'r') as f:
         data = json.load(f)
-
-    frame_keys = [key for key in data.keys() if key.isdigit()]
-
-    last_frame_key = str(max(map(int, frame_keys)))
-
-    return data[last_frame_key]
-
-
-def get_frame_data(json_path, frame_number=-1):
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-
+    if data.get("min_dist_frame") is not None:
+        frame_number = data.get("min_dist_frame")
+        print(f"Frame number: {frame_number}")
+    else:
+        frame_number = default_frame_number
     frame_keys = [key for key in data.keys() if key.isdigit()]
 
     frame_keys = sorted(map(int, frame_keys))
-
-    max_frame_key = frame_keys[-1]
 
     if frame_number == -1:
         random_frame_key = str(random.choice(frame_keys))
         return data[random_frame_key]
     elif frame_number in frame_keys:
         return data[str(frame_number)]
-    else:
-        return data[str(max_frame_key)]
 
 
-def call_gpt(question: str, model_version: str = "gpt-3.5-turbo", max_tokens: int = 100, retries: int = 3) -> str:
+def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int = 100, retries: int = 3) -> str:
     """
     Call GPT model (3.5, 4, 4-turbo) with retry and quota check, supporting proxy settings.
 
@@ -239,7 +229,7 @@ def modify_json_file(json_file, mutate_info):
     for key, value in data.items():
         if isinstance(value, dict) and "NPC" in value:
             for npc in value["NPC"]:
-                if npc["id"] == vehicle_id:
+                if int(npc["id"]) == int(vehicle_id):
                     # Modify velocity
                     velocity = npc.get("velocity", {})
                     current_speed = (velocity.get("x", 0) ** 2 + velocity.get("y", 0) ** 2 + velocity.get("z",
@@ -258,18 +248,19 @@ def modify_json_file(json_file, mutate_info):
 
                     # Modify location (keeping rotation unchanged)
                     if "transform" in npc and "location" in npc["transform"]:
-                        npc["transform"]["location"]["x"] = new_location["x"]
-                        npc["transform"]["location"]["y"] = new_location["y"]
+                        npc["transform"]["location"]["x"] = new_location[0]
+                        npc["transform"]["location"]["y"] = new_location[1]
                     break
     return data
+
 
 def get_answer3_vehicle_info(response_json):
     if "answer3" in response_json:
         try:
             vehicle_info = {
-                "Vehicle ID": response_json["answer3"]["Modified Background Vehicle for diversity"]["Vehicle ID"],
-                "Location": response_json["answer3"]["Modified Background Vehicle for diversity"]["Location"],
-                "Speed": response_json["answer3"]["Modified Background Vehicle for diversity"]["Speed"]
+                "Vehicle ID": int(response_json["answer3"]["Modified Background Vehicle for diversity"]["Vehicle ID"]),
+                "Location": ast.literal_eval(response_json["answer3"]["Modified Background Vehicle for diversity"]["Location"]),
+                "Speed": float(response_json["answer3"]["Modified Background Vehicle for diversity"]["Speed"].replace("km/h",""))/3.6
             }
             return vehicle_info
         except KeyError as e:
@@ -293,9 +284,7 @@ def get_all_json_files(base_dir):
 
 if __name__ == "__main__":
     Scenario_database = {}
-    json_files = get_all_json_files('./json_out')
-    if not os.path.exists('./new_json_files'):
-        os.mkdir('./new_json_files')
+    json_files = get_all_json_files('./data/save/time_record/')
     for json_file in json_files:
         print(f"Processing {json_file}...")
         try:
@@ -312,11 +301,11 @@ if __name__ == "__main__":
             mutate_info = answer3_vehicle_info
             data = modify_json_file(json_file, mutate_info)
             # Save modified JSON file
-            new_json_file = json_file.replace('.json', '_modified.json')
+            new_json_file = json_file.replace('.json', '_modified.json').replace("./data_ot/save/time_record/",
+                                                                                 "./data/new/time_record/")
             with open(new_json_file, 'w') as f:
                 json.dump(data, f, indent=4)
             print(f"Modified JSON file saved as: {new_json_file}")
         # reload scenario state
         except Exception as e:
             print(f"Error processing {json_file}: {e}")
-

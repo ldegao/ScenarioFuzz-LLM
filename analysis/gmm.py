@@ -26,7 +26,7 @@ def gather_data(base_folder_path):
         dirs.sort()
         files.sort()
         for filename in files:
-            if 'error' in root:
+            if 'error' in root or 'queue' in root:
                 continue
             if filename.endswith('.json'):
                 filepath = os.path.join(root, filename)
@@ -172,7 +172,6 @@ def train_and_plot_gmm_with_correct_order_and_scatter(df,filename_print):
     # Calculate probability densities for all data points
     probabilities = np.exp(gmm.score_samples(X))
 
-
     # Print (x, y, p) for all points
     print("Data points and their probabilities:")
     for i in range(len(X_pca)):
@@ -203,7 +202,7 @@ def train_and_plot_gmm_with_correct_order_and_scatter(df,filename_print):
     ax.w_yaxis.line.set_color((1.0, 1.0, 1.0, 0))
     ax.w_zaxis.line.set_color((1.0, 1.0, 1.0, 0))
 
-    ax.grid(False)
+    # ax.grid(False)
     ax.set_facecolor((1.0, 1.0, 1.0, 0))
     ax.xaxis.pane.fill = False
     ax.yaxis.pane.fill = False
@@ -211,20 +210,20 @@ def train_and_plot_gmm_with_correct_order_and_scatter(df,filename_print):
     ax.w_xaxis.line.set_color('black')
     ax.w_yaxis.line.set_color('black')
     ax.w_zaxis.line.set_color('black')
-    ax.set_title("3D Density Surface of GMM after PCA")
-    ax.set_xlabel("PCA x")
-    ax.set_ylabel("PCA y")
-    ax.set_zlabel("Probability Density")
+    ax.tick_params(axis='x', labelsize=30)  # X
+    ax.tick_params(axis='y', labelsize=30)  # Y
+    ax.tick_params(axis='z', labelsize=30)  # Z
 
-    ax.set_zlim(-4, Z.max() + 0.5)
+    ax.set_zlim(-4, 14)
     ax.view_init(elev=10, azim=140)
-    fig.colorbar(surface, ax=ax, shrink=0.5, aspect=10)
+    cbar = fig.colorbar(surface, ax=ax, shrink=0.5, aspect=10)
+    cbar.ax.tick_params(labelsize=30)
     plt.tight_layout()
-    plt.savefig("correct_density_plot_3D_with_texture.png", dpi=300)
+    plt.savefig("3D.pdf", dpi=300)
     plt.show()
     plt.close(fig)
 
-    print("3D density plot with texture saved as correct_density_plot_3D_with_texture.png")
+    print("3D.png")
 
 
 def mark_point_on_3d_plot(ax, x, y, z):
@@ -246,7 +245,7 @@ def mark_point_on_3d_plot(ax, x, y, z):
     ax.plot([x, x_offset], [y, y_offset], [z, z_offset], color='red', linestyle='--', linewidth=2)
 
     # Annotate the point with the z value
-    ax.text(x_offset, y_offset, z_offset+0.5, f'p = {z:.3f}', color='black', fontsize=15, ha='center')
+    ax.text(x_offset, y_offset, z_offset+0.5, f'p = {z:.3f}', color='black', fontsize=30, ha='center')
 
 
 # Example usage

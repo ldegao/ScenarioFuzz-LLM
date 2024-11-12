@@ -9,8 +9,8 @@ new_camera_dir="${save_dir}camera/"
 errors_dir="../data/output/errors/"
 new_errors_dir="${save_dir}errors/"
 
-trace_dir="../data/output/trace/"
-new_trace_dir="${save_dir}trace/"
+trace_dir="../data/output/time_record/"
+new_trace_dir="${save_dir}time_record/"
 mkdir -p "$save_dir"
 if [ -d "$camera_dir" ]; then
   if [ "$(ls -A $camera_dir)" ]; then

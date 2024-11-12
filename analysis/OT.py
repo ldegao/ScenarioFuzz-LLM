@@ -1,6 +1,7 @@
 import glob
 import os
 import json
+import re
 import shutil
 
 import numpy as np
@@ -9,6 +10,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import euclidean
 from scipy.sparse import dok_matrix
 from sklearn.manifold import MDS
+from sklearn.ensemble import IsolationForest
 import random
 
 
@@ -27,24 +29,30 @@ def load_json(file_path):
     return None
 
 
-def extract_frames(data, frame=50, length=10):
+def extract_frames(data, default_frame=50, length=10):
     half_len = length // 2
     time_steps = []
     frames = []
+
+    if "min_dist_frame" in data:
+        frame = int(data["min_dist_frame"])
+    else:
+        frame = default_frame
     for i in range(frame - half_len, frame + half_len + 1):
         time_step = f"{i}"
         time_steps.append(time_step)
 
     for time_step in time_steps:
-        details = data[time_step]
+        details = data.get(time_step)
         if not isinstance(details, dict) or not details.get("player"):
             continue
 
         frame_data = {'npcs': []}
         player_position = details["player"]["transform"]["location"]
         player_velocity = details["player"]["velocity"]
+
         player_data = {
-            'position': np.array([player_position['x'], player_position['y'], player_position['z']]),
+            'position': np.array([0, 0, 0]),
             'velocity': np.array([player_velocity['x'], player_velocity['y'], player_velocity['z']]),
             'type': 'player'
         }
@@ -54,8 +62,15 @@ def extract_frames(data, frame=50, length=10):
             for npc in details["NPC"]:
                 npc_position = npc["transform"]["location"]
                 npc_velocity = npc["velocity"]
+
+                relative_position = np.array([
+                    npc_position['x'] - player_position['x'],
+                    npc_position['y'] - player_position['y'],
+                    npc_position['z'] - player_position['z']
+                ])
+
                 npc_data = {
-                    'position': np.array([npc_position['x'], npc_position['y'], npc_position['z']]),
+                    'position': relative_position,  # ??????
                     'velocity': np.array([npc_velocity['x'], npc_velocity['y'], npc_velocity['z']]),
                     'type': 'npc'
                 }
@@ -107,25 +122,24 @@ def graph_dtw(sequence1, sequence2, k=5):
 
 # Sampling function to reduce the number of frames
 
-
 def calculate_similarity_matrix(base_folder_path):
     file_paths = []
     data_list = []
+    files_to_remove = []
 
     for root, dirs, files in os.walk(base_folder_path):
         dirs.sort()
         files.sort()
         for filename in files:
             if filename.endswith('.json') and 'time_record' in root:
-
                 file_path = os.path.join(root, filename)
                 data = load_json(file_path)
                 if data is None:
                     continue
-
                 # Extract frames and check against min_frame_count
                 extracted_frames = extract_frames(data)
                 data_list.append(extracted_frames)
+                # print(f"Extracted frames {extracted_frames} from file: {file_path}")
                 file_paths.append(file_path)
 
     num_files = len(file_paths)
@@ -138,8 +152,22 @@ def calculate_similarity_matrix(base_folder_path):
             else:
                 print(f"Calculating similarity between file {i + 1}/{num_files} and file {j + 1}/{num_files}")
                 try:
+                    if np.array_equal(data_list[i], data_list[j]):
+                        print(f"File {file_paths[i]} and File {file_paths[j]} have identical data frames.")
+
+                        if 'save' in file_paths[i]:
+                            print(f"Deleting file {file_paths[i]} because it contains 'save' in its path.")
+                            files_to_remove.append(file_paths[i])
+                        else:
+                            print(f"Deleting file {file_paths[j]} because it contains 'save' in its path.")
+                            files_to_remove.append(file_paths[j])
+                        continue
+
                     score = graph_dtw(data_list[i], data_list[j])
+                    if score == np.inf:
+                        score = -1
                     similarity_matrix[i, j] = similarity_matrix[j, i] = score
+
                     print(f"Similarity score between file {i} and file {j}: {score}")
                 except Exception as e:
                     print(f"Error calculating similarity between file {i} and file {j}: {e}")
@@ -147,15 +175,40 @@ def calculate_similarity_matrix(base_folder_path):
 
     large_constant = np.max(similarity_matrix[np.isfinite(similarity_matrix)]) * 1.1
     similarity_matrix = np.nan_to_num(similarity_matrix, nan=0.0, posinf=large_constant)
+    # change -1 in similarity_matrix to max in similarity_matrix
+    similarity_matrix[similarity_matrix == -1] = np.max(similarity_matrix)
 
     np.save('similarity_matrix.npy', similarity_matrix)
+
+    for file_path in files_to_remove:
+        try:
+            os.remove(file_path)
+            print(f"Deleted file: {file_path}")
+        except Exception as e:
+            print(f"Error deleting file {file_path}: {e}")
 
     return similarity_matrix  # Return both similarity matrix and file paths
 
 
-# Modify the plot_similarity_matrix function to differentiate points based on file path
+def find_nearest_points(points, num_points=10):
+    # Calculate Euclidean distance of each point from the origin (0,0)
+    distances_to_origin = np.linalg.norm(points, axis=1)
+
+    # Get the indices of the nearest points
+    nearest_indices = np.argsort(distances_to_origin)[:num_points]
+
+    # Get the nearest points and their distances
+    nearest_points = points[nearest_indices]
+    nearest_distances = distances_to_origin[nearest_indices]
+
+    return nearest_points, nearest_distances, nearest_indices
+
+
+# Ensure `find_nearest_points` function is defined or imported here
+
 def plot_similarity_matrix(similarity_matrix):
     file_paths = []
+    output_folder = "json_out"
     for root, dirs, files in os.walk('../data'):
         dirs.sort()
         files.sort()
@@ -163,93 +216,126 @@ def plot_similarity_matrix(similarity_matrix):
             if filename.endswith('.json') and 'time_record' in root:
                 file_paths.append(os.path.join(root, filename))
 
-    # mean_dists = np.mean(similarity_matrix, axis=1)
-    # threshold = 3 * np.mean(mean_dists)
-    # non_outliers = mean_dists <= threshold
-    # filtered_similarity_matrix = similarity_matrix[non_outliers][:, non_outliers]
-    # filtered_file_paths = [file_paths[i] for i in range(len(file_paths)) if non_outliers[i]]
-    filtered_similarity_matrix = similarity_matrix
-
+    # MDS transformation
     mds = MDS(n_components=2, dissimilarity="precomputed", random_state=6)
-    points = mds.fit_transform(filtered_similarity_matrix)
+    points = mds.fit_transform(similarity_matrix)
+
+    if not os.path.exists(output_folder):
+        os.mkdir(output_folder)
 
     cluster_center = np.mean(points, axis=0)
-
     distances = np.linalg.norm(points - cluster_center, axis=1)
     normalized_distances = (distances - np.min(distances)) / (np.max(distances) - np.min(distances))
 
     plt.figure(figsize=(10, 8))
+    points_A, save_points, points_B = [], [], []
+    tmp_normalized_distances, save_normalized_distances, new_normalized_distances = [], [], []
 
-    # Differentiating points by file path
-    tmp_points = []
-    save_points = []
-    tmp_normalized_distances = []
-    save_normalized_distances = []
+    tmp_to_new_mapping = {}
 
     for i, file_path in enumerate(file_paths):
         if 'tmp' in file_path:
-            tmp_points.append(i)
+            points_A.append(points[i])
             tmp_normalized_distances.append(normalized_distances[i])
+            corresponding_new_file = file_path.replace("/tmp/", "/new/").replace(".json", "_modified.json")
+            for j, new_file in enumerate(file_paths):
+                if new_file == corresponding_new_file:
+                    tmp_to_new_mapping[i] = j
+                    break
         elif 'save' in file_path:
-            save_points.append(i)
+            save_points.append(points[i])
             save_normalized_distances.append(normalized_distances[i])
+        elif 'new' in file_path:
+            points_B.append(points[i])
+            new_normalized_distances.append(normalized_distances[i])
 
-    plt.scatter(points[tmp_points, 0], points[tmp_points, 1],
-                c=tmp_normalized_distances, cmap='coolwarm', s=100,
-                edgecolor='red', linewidth=2, label='TMP Files')
+    # distance_matrix_A = similarity_matrix[np.ix_(tmp_points, tmp_points)]
+    # points_A = mds.fit_transform(distance_matrix_A)
+    # cluster_center_A = np.mean(points_A, axis=0)
+    # distances_A = np.linalg.norm(points_A - cluster_center_A, axis=1)
+    #
+    # distance_matrix_B = similarity_matrix[np.ix_(new_points, new_points)]
+    # points_B = mds.fit_transform(distance_matrix_B)
+    # cluster_center_B = np.mean(points_B, axis=0)
+    # distances_B = np.linalg.norm(points_B - cluster_center_B, axis=1)
 
-    plt.scatter(points[save_points, 0], points[save_points, 1],
-                c=save_normalized_distances, cmap='coolwarm', s=100,
-                edgecolor='black', linewidth=2, label='Save Files')
+    # mds = MDS(n_components=2, dissimilarity="precomputed", random_state=6)
+    # combined_points = mds.fit_transform(distance_matrix_combined)
+    #
+    # points_A = combined_points[:len(tmp_points)]
+    # points_B = combined_points[len(tmp_points):]
+    #
+    # cluster_center_A = np.mean(points_A, axis=0)
+    # cluster_center_B = np.mean(points_B, axis=0)
+    #
+    # distances_A = np.linalg.norm(points_A - cluster_center_A, axis=1)
+    # distances_B = np.linalg.norm(points_B - cluster_center_B, axis=1)
 
-    plt.colorbar(label="Distance to Cluster Center")
-    plt.xlabel("MDS: X")
-    plt.ylabel("MDS: Y")
-    plt.title("Similarity of Scenarios (Color by Distance to Cluster Center)")
-    plt.legend()
+    points_A = np.array(points_A)
+    points_B = np.array(points_B)
+
+    # distances_from_origin_A = np.linalg.norm(points_A, axis=1)
+    # distances_from_origin_B = np.linalg.norm(points_B, axis=1)
+    # new_points_A, new_points_B = [], []
+    # for (xA, yA), (xB, yB), dA, dB in zip(points_A, points_B, distances_from_origin_A, distances_from_origin_B):
+    #     # if dB > dA:
+    #     # direction_A = np.array([xA, yA]) / dA
+    #     # direction_B = np.array([xB, yB]) / dB
+    #     new_points_A.append((xA, yA))
+    #     new_points_B.append((xB, yB))
+
+        # offset_A = direction_A * (dA + 0.5)  # 0.5
+        # offset_B = direction_B * (dB + 0.5)  # 0.5
+
+        # plt.arrow(offset_A[0], offset_A[1], offset_B[0] - offset_A[0], offset_B[1] - offset_A[1],
+        #           color='grey', length_includes_head=True, head_width=1, head_length=1, width=0.1,
+        #           linestyle=(0, (2, 8)))
+
+    # min_len = min(len(points_A), len(points_B))
+    # points_A = np.array(new_points_A)
+    # points_B = np.array(new_points_B)
+    points_C = np.array(save_points)
+
+    clf = IsolationForest(contamination=0.5)
+    outliers = clf.fit_predict(points_C)
+    filtered_points_C = points_C[outliers == 1]
+    points_C = filtered_points_C
+    points_CandA = np.concatenate((points_C, points_A), axis=0)
+    # plt.scatter(points_A[:, 0], points_A[:, 1], c='grey', s=100, label='Original')
+    plt.scatter(points_B[:, 0], points_B[:, 1], c='red', s=100, label='LLM-Generated Scenarios')
+    plt.scatter(points_CandA[:, 0], points_CandA[:, 1], c='grey', s=100, label='Other Scenarios')
+    plt.yticks(size=30)
+    plt.xticks(size=30)
+
+    distances_from_origin_A = np.linalg.norm(points_CandA, axis=1)
+    distances_from_origin_B = np.linalg.norm(points_B, axis=1)
+    # further_points_count = np.sum(distances_from_origin_B > distances_from_origin_A)
+    # total_points_count = len(points_A)
+    #
+    # further_points_ratio = further_points_count / total_points_count
+
+    mean_distance_A = np.mean(distances_from_origin_A)
+    mean_distance_B = np.mean(distances_from_origin_B)
+
+    # print("further_points_ratio", further_points_ratio)
+    print("distance_from_origin_A :", mean_distance_A)
+    print("distance_from_origin_B :", mean_distance_B)
+    print("distance_increase % :", mean_distance_B / mean_distance_A)
+
+    var_x_A = np.var([point[0] for point in points_CandA])
+    var_y_A = np.var([point[1] for point in points_CandA])
+    var_x_B = np.var([point[0] for point in points_B])
+    var_y_B = np.var([point[1] for point in points_B])
+
+    print("Variance in X for A:", var_x_A)
+    print("Variance in Y for A:", var_y_A)
+    print("Variance in X for B:", var_x_B)
+    print("Variance in Y for B:", var_y_B)
+    print("Variance_increase % :", (var_x_B + var_y_B) / (var_x_A + var_y_A))
+
+    plt.legend(fontsize=18)
+    plt.savefig("ot.pdf", dpi=300)
     plt.show()
-
-
-def get_all_json_files(base_dir):
-    json_files = []
-    for root, dirs, files in os.walk(base_dir):
-        dirs.sort()
-        files.sort()
-        for filename in files:
-            if filename.endswith('.json') and 'time_record' in root:
-                json_files.append(os.path.join(root, filename))
-    return json_files
-
-
-def test():
-    # Assuming similarity_matrix.npy is loaded, and file_paths contains JSON file paths
-
-    # Load similarity matrix and other data
-    similarity_matrix = np.load('similarity_matrix.npy')  # Assuming precomputed similarity matrix
-    file_paths = get_all_json_files('../data')  # Assuming file paths are known
-
-    # MDS and plot as before
-    mds = MDS(n_components=2, dissimilarity="precomputed", random_state=6)
-    points = mds.fit_transform(similarity_matrix)
-
-    # Calculate distances to cluster center
-    cluster_center = np.mean(points, axis=0)
-    distances = np.linalg.norm(points - cluster_center, axis=1)
-    normalized_distances = (distances - np.min(distances)) / (np.max(distances) - np.min(distances))
-
-    # Select 10 bluest, non-overlapping points
-    sorted_indices = np.argsort(normalized_distances)
-    selected_indices = sorted_indices[:10]  # Get indices of the 10 points closest to the cluster center
-
-    # Print file names and copy to new folder
-    output_folder = 'json_out'
-    os.makedirs(output_folder, exist_ok=True)
-
-    print("Selected files for blue, non-overlapping points:")
-    for idx in selected_indices:
-        file_path = file_paths[idx]
-        print(file_path)
-        shutil.copy(file_path, os.path.join(output_folder, os.path.basename(file_path)))
 
 
 # Main function

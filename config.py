@@ -68,7 +68,7 @@ class Config:
         self.density = 1
         self.num_mutation_car = 1
         self.density = 1
-        self.no_traffic_lights = False
+        self.no_traffic_lights = True
 
         # Fuzzing metadata
         self.town = None
@@ -86,7 +86,7 @@ class Config:
             "lane": True,
             "crash": True,
             "stuck": True,
-            "red": True,
+            "red": False,
             "other": True,
         }
 

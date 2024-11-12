@@ -261,6 +261,8 @@ def run_test(sim_port, target, density, town, duration):
             # Capture any other general exceptions
             print(f"KeyboardInterrupt")
             return
+        except Exception as e:
+            print(f"Unexpected exception caught: {e}. Continuing program execution.")
         else:
             print(f"Unexpected exception caught")
 

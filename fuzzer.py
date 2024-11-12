@@ -544,6 +544,9 @@ def check_nondominated_stability(pareto_front, archive, generations=10, epsilon=
     generations: Number of generations to compare
     epsilon: Threshold to determine if there's a significant change in the Pareto front
     """
+    # Check if pareto_front is empty
+    if not pareto_front:
+        return False  # No solutions, can't check crowding distance stability
     archive.append(pareto_front)
 
     if len(archive) < generations:
@@ -565,6 +568,9 @@ def check_crowding_distance_stability(pareto_front, generations=10, epsilon=1e-6
     generations: Number of generations to compare
     epsilon: Threshold to determine if there's a significant change in crowding distance
     """
+    # Check if pareto_front is empty
+    if not pareto_front:
+        return False  # No solutions, can't check crowding distance stability
     # Calculate the average crowding distance for the current generation's Pareto front
     crowding_distances = tools.sortNondominated(pareto_front, len(pareto_front))[0]
     avg_crowding_distance = np.mean([ind.fitness.crowding_dist for ind in crowding_distances])
@@ -586,6 +592,9 @@ def check_objective_variance_stability(pareto_front, generations=10, epsilon=1e-
     generations: Number of generations to compare
     epsilon: Threshold to determine if there's a significant change in variance
     """
+    # Check if pareto_front is empty
+    if not pareto_front:
+        return False  # No solutions, can't check crowding distance stability
     # Calculate variance of the objectives in the current generation
     objectives = np.array([ind.fitness.values for ind in pareto_front])
     current_variance = np.var(objectives, axis=0)
