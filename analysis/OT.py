@@ -10,6 +10,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import euclidean
 from scipy.sparse import dok_matrix
 from sklearn.manifold import MDS
+from sklearn.ensemble import IsolationForest
 import random
 
 
@@ -49,8 +50,9 @@ def extract_frames(data, default_frame=50, length=10):
         frame_data = {'npcs': []}
         player_position = details["player"]["transform"]["location"]
         player_velocity = details["player"]["velocity"]
+
         player_data = {
-            'position': np.array([player_position['x'], player_position['y'], player_position['z']]),
+            'position': np.array([0, 0, 0]),
             'velocity': np.array([player_velocity['x'], player_velocity['y'], player_velocity['z']]),
             'type': 'player'
         }
@@ -60,8 +62,15 @@ def extract_frames(data, default_frame=50, length=10):
             for npc in details["NPC"]:
                 npc_position = npc["transform"]["location"]
                 npc_velocity = npc["velocity"]
+
+                relative_position = np.array([
+                    npc_position['x'] - player_position['x'],
+                    npc_position['y'] - player_position['y'],
+                    npc_position['z'] - player_position['z']
+                ])
+
                 npc_data = {
-                    'position': np.array([npc_position['x'], npc_position['y'], npc_position['z']]),
+                    'position': relative_position,  # ??????
                     'velocity': np.array([npc_velocity['x'], npc_velocity['y'], npc_velocity['z']]),
                     'type': 'npc'
                 }
@@ -130,6 +139,7 @@ def calculate_similarity_matrix(base_folder_path):
                 # Extract frames and check against min_frame_count
                 extracted_frames = extract_frames(data)
                 data_list.append(extracted_frames)
+                # print(f"Extracted frames {extracted_frames} from file: {file_path}")
                 file_paths.append(file_path)
 
     num_files = len(file_paths)
@@ -142,23 +152,20 @@ def calculate_similarity_matrix(base_folder_path):
             else:
                 print(f"Calculating similarity between file {i + 1}/{num_files} and file {j + 1}/{num_files}")
                 try:
-                    # ?????????????
                     if np.array_equal(data_list[i], data_list[j]):
                         print(f"File {file_paths[i]} and File {file_paths[j]} have identical data frames.")
 
-                        # ????????? 'save' ?????????
                         if 'save' in file_paths[i]:
                             print(f"Deleting file {file_paths[i]} because it contains 'save' in its path.")
-                            files_to_remove.append(file_paths[i])  # ???? 'save' ???
+                            files_to_remove.append(file_paths[i])
                         else:
                             print(f"Deleting file {file_paths[j]} because it contains 'save' in its path.")
-                            files_to_remove.append(file_paths[j])  # ???? 'save' ???
-                        continue  # ????????????????????
+                            files_to_remove.append(file_paths[j])
+                        continue
 
-                    # ?? DTW ???
                     score = graph_dtw(data_list[i], data_list[j])
                     if score == np.inf:
-                        score = 10000
+                        score = -1
                     similarity_matrix[i, j] = similarity_matrix[j, i] = score
 
                     print(f"Similarity score between file {i} and file {j}: {score}")
@@ -168,10 +175,11 @@ def calculate_similarity_matrix(base_folder_path):
 
     large_constant = np.max(similarity_matrix[np.isfinite(similarity_matrix)]) * 1.1
     similarity_matrix = np.nan_to_num(similarity_matrix, nan=0.0, posinf=large_constant)
+    # change -1 in similarity_matrix to max in similarity_matrix
+    similarity_matrix[similarity_matrix == -1] = np.max(similarity_matrix)
 
     np.save('similarity_matrix.npy', similarity_matrix)
 
-    # ??????
     for file_path in files_to_remove:
         try:
             os.remove(file_path)
@@ -194,6 +202,7 @@ def find_nearest_points(points, num_points=10):
     nearest_distances = distances_to_origin[nearest_indices]
 
     return nearest_points, nearest_distances, nearest_indices
+
 
 # Ensure `find_nearest_points` function is defined or imported here
 
@@ -219,122 +228,114 @@ def plot_similarity_matrix(similarity_matrix):
     normalized_distances = (distances - np.min(distances)) / (np.max(distances) - np.min(distances))
 
     plt.figure(figsize=(10, 8))
-    tmp_points, save_points, new_points = [], [], []
+    points_A, save_points, points_B = [], [], []
     tmp_normalized_distances, save_normalized_distances, new_normalized_distances = [], [], []
 
     tmp_to_new_mapping = {}
 
     for i, file_path in enumerate(file_paths):
         if 'tmp' in file_path:
-            tmp_points.append(i)
-            # tmp_normalized_distances.append(normalized_distances[i])
+            points_A.append(points[i])
+            tmp_normalized_distances.append(normalized_distances[i])
             corresponding_new_file = file_path.replace("/tmp/", "/new/").replace(".json", "_modified.json")
             for j, new_file in enumerate(file_paths):
                 if new_file == corresponding_new_file:
                     tmp_to_new_mapping[i] = j
                     break
         elif 'save' in file_path:
-            save_points.append(i)
-            # save_normalized_distances.append(normalized_distances[i])
+            save_points.append(points[i])
+            save_normalized_distances.append(normalized_distances[i])
         elif 'new' in file_path:
-            new_points.append(i)
-            # new_normalized_distances.append(normalized_distances[i])
+            points_B.append(points[i])
+            new_normalized_distances.append(normalized_distances[i])
 
-    distance_matrix_A = similarity_matrix[np.ix_(tmp_points, tmp_points)]
-    points_A = mds.fit_transform(distance_matrix_A)
-    cluster_center_A = np.mean(points_A, axis=0)
-    distances_A = np.linalg.norm(points_A - cluster_center_A, axis=1)
-    normalized_distances_A = (distances_A - np.min(distances_A)) / (np.max(distances_A) - np.min(distances_A))
-
-    distance_matrix_B = similarity_matrix[np.ix_(new_points, new_points)]
-    points_B = mds.fit_transform(distance_matrix_B)
-    cluster_center_B = np.mean(points_B, axis=0)
-    distances_B = np.linalg.norm(points_B - cluster_center_B, axis=1)
-    normalized_distances_B = (distances_B - np.min(distances_B)) / (np.max(distances_B) - np.min(distances_B))
-
-    # tmp_points = np.array(tmp_points, dtype=int)
-    # save_points = np.array(save_points, dtype=int)
-    # new_points = np.array(new_points, dtype=int)
+    # distance_matrix_A = similarity_matrix[np.ix_(tmp_points, tmp_points)]
+    # points_A = mds.fit_transform(distance_matrix_A)
+    # cluster_center_A = np.mean(points_A, axis=0)
+    # distances_A = np.linalg.norm(points_A - cluster_center_A, axis=1)
     #
-    # distance_increase = sorted(
-    #     [(new_idx, normalized_distances[new_idx] - normalized_distances[tmp_idx])
-    #      for tmp_idx, new_idx in tmp_to_new_mapping.items() if
-    #      normalized_distances[new_idx] > normalized_distances[tmp_idx]],
-    #     key=lambda x: x[1], reverse=True
-    # )
+    # distance_matrix_B = similarity_matrix[np.ix_(new_points, new_points)]
+    # points_B = mds.fit_transform(distance_matrix_B)
+    # cluster_center_B = np.mean(points_B, axis=0)
+    # distances_B = np.linalg.norm(points_B - cluster_center_B, axis=1)
 
-    # for tmp_idx, new_idx in tmp_to_new_mapping.items():
-    #     plt.arrow(
-    #         points[tmp_idx, 0], points[tmp_idx, 1],
-    #         points[new_idx, 0] - points[tmp_idx, 0],
-    #         points[new_idx, 1] - points[tmp_idx, 1],
-    #         edgecolor='gray', length_includes_head=True, head_width=0.02, head_length=0.05
-    #     )
-
-    # for idx, _ in distance_increase:
-    #     file_name = os.path.basename(file_paths[idx])
-    #     plt.text(points[idx, 0], points[idx, 1], file_name, color='red', fontsize=10, ha='right', va='bottom')
-    #     plt.scatter(points[idx, 0], points[idx, 1], c='none', edgecolor='blue', s=120, linewidth=1.5)
-
-    # plt.scatter(points[points_A, 0], points[points_A, 1], c=tmp_normalized_distances, cmap='coolwarm', s=100,
-    #             edgecolor='red', linewidth=1, label='TMP Files')
-    # plt.scatter(points[new_points, 0], points[new_points, 1], c=new_normalized_distances, cmap='coolwarm', s=100,
-    #             edgecolor='black', linewidth=1, label='New Files')
-
-    # plt.scatter(points[points_B, 0], points[points_B, 1], c=save_normalized_distances, cmap='coolwarm', s=100,
-    #             label='Save Files')
-    # plt.scatter(points_A[:, 0], points_A[:, 1], c=normalized_distances_A, cmap='coolwarm', s=100,
-    #              label='Original')
+    # mds = MDS(n_components=2, dissimilarity="precomputed", random_state=6)
+    # combined_points = mds.fit_transform(distance_matrix_combined)
     #
-    # plt.scatter(points_B[:, 0], points_B[:, 1], c=normalized_distances_B, cmap='coolwarm', s=100,
-    #              label='After LLM Mutation')
+    # points_A = combined_points[:len(tmp_points)]
+    # points_B = combined_points[len(tmp_points):]
+    #
+    # cluster_center_A = np.mean(points_A, axis=0)
+    # cluster_center_B = np.mean(points_B, axis=0)
+    #
+    # distances_A = np.linalg.norm(points_A - cluster_center_A, axis=1)
+    # distances_B = np.linalg.norm(points_B - cluster_center_B, axis=1)
 
-    distances_from_origin_A = np.linalg.norm(points_A, axis=1)
-    distances_from_origin_B = np.linalg.norm(points_B, axis=1)
+    points_A = np.array(points_A)
+    points_B = np.array(points_B)
 
-    # ??????
-    for (xA, yA), (xB, yB), dA, dB in zip(points_A, points_B, distances_from_origin_A, distances_from_origin_B):
-        # if dB > dA:
-        direction_A = np.array([xA, yA]) / dA
-        direction_B = np.array([xB, yB]) / dB
+    # distances_from_origin_A = np.linalg.norm(points_A, axis=1)
+    # distances_from_origin_B = np.linalg.norm(points_B, axis=1)
+    # new_points_A, new_points_B = [], []
+    # for (xA, yA), (xB, yB), dA, dB in zip(points_A, points_B, distances_from_origin_A, distances_from_origin_B):
+    #     # if dB > dA:
+    #     # direction_A = np.array([xA, yA]) / dA
+    #     # direction_B = np.array([xB, yB]) / dB
+    #     new_points_A.append((xA, yA))
+    #     new_points_B.append((xB, yB))
 
-        offset_A = direction_A * (dA + 0.5)  # 0.5
-        offset_B = direction_B * (dB + 0.5)  # 0.5
+        # offset_A = direction_A * (dA + 0.5)  # 0.5
+        # offset_B = direction_B * (dB + 0.5)  # 0.5
 
-        plt.arrow(offset_A[0], offset_A[1], offset_B[0] - offset_A[0], offset_B[1] - offset_A[1],
-                  color='black', length_includes_head=True, head_width=100, head_length=100, width=0.1)
+        # plt.arrow(offset_A[0], offset_A[1], offset_B[0] - offset_A[0], offset_B[1] - offset_A[1],
+        #           color='grey', length_includes_head=True, head_width=1, head_length=1, width=0.1,
+        #           linestyle=(0, (2, 8)))
 
-    min_len = min(len(points_A), len(points_B))
-    points_A = points_A[:min_len]
-    points_B = points_B[:min_len]
+    # min_len = min(len(points_A), len(points_B))
+    # points_A = np.array(new_points_A)
+    # points_B = np.array(new_points_B)
+    points_C = np.array(save_points)
 
-    plt.scatter(points_A[:, 0], points_A[:, 1], c='grey', s=100, label='Original')
-    plt.scatter(points_B[:, 0], points_B[:, 1], c='red', s=100, label='After LLM Mutation')
+    clf = IsolationForest(contamination=0.5)
+    outliers = clf.fit_predict(points_C)
+    filtered_points_C = points_C[outliers == 1]
+    points_C = filtered_points_C
+    points_CandA = np.concatenate((points_C, points_A), axis=0)
+    # plt.scatter(points_A[:, 0], points_A[:, 1], c='grey', s=100, label='Original')
+    plt.scatter(points_B[:, 0], points_B[:, 1], c='red', s=100, label='LLM-Generated Scenarios')
+    plt.scatter(points_CandA[:, 0], points_CandA[:, 1], c='grey', s=100, label='Other Scenarios')
     plt.yticks(size=30)
     plt.xticks(size=30)
 
-    distances_from_origin_A = np.linalg.norm(points_A, axis=1)
+    distances_from_origin_A = np.linalg.norm(points_CandA, axis=1)
     distances_from_origin_B = np.linalg.norm(points_B, axis=1)
-    further_points_count = np.sum(distances_from_origin_B > distances_from_origin_A)
-    total_points_count = len(points_A)
-
-    further_points_ratio = further_points_count / total_points_count
+    # further_points_count = np.sum(distances_from_origin_B > distances_from_origin_A)
+    # total_points_count = len(points_A)
+    #
+    # further_points_ratio = further_points_count / total_points_count
 
     mean_distance_A = np.mean(distances_from_origin_A)
     mean_distance_B = np.mean(distances_from_origin_B)
 
-    print("further_points_ratio", further_points_ratio)
+    # print("further_points_ratio", further_points_ratio)
     print("distance_from_origin_A :", mean_distance_A)
     print("distance_from_origin_B :", mean_distance_B)
     print("distance_increase % :", mean_distance_B / mean_distance_A)
 
+    var_x_A = np.var([point[0] for point in points_CandA])
+    var_y_A = np.var([point[1] for point in points_CandA])
+    var_x_B = np.var([point[0] for point in points_B])
+    var_y_B = np.var([point[1] for point in points_B])
+
+    print("Variance in X for A:", var_x_A)
+    print("Variance in Y for A:", var_y_A)
+    print("Variance in X for B:", var_x_B)
+    print("Variance in Y for B:", var_y_B)
+    print("Variance_increase % :", (var_x_B + var_y_B) / (var_x_A + var_y_A))
+
     plt.legend(fontsize=18)
     plt.savefig("ot.pdf", dpi=300)
     plt.show()
-
-
-    # for idx, dist in distance_increase:
-    #     print(f"{os.path.basename(file_paths[idx])}: Distance increase = {dist:.4f}")
 
 
 # Main function
