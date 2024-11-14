@@ -143,7 +143,7 @@ cd ./script
 The experimental data, including datasets, results, and unique violation scenarios identified by ScenarioFuzz-LLM, is available for download. Access the data here: 
 [Experimental Data - Google Drive](https://drive.google.com/file/d/179mu5w462AwPAI4bms6FHQ1WVwMmxdNy/view?usp=drive_link)
 
-## Typical Errors Identified in Autonomous Driving Systems (ADS)
+## Typical Errors Identified in Autoware
 
 ScenarioFuzz-LLM has identified several unique types of violations in ADS, highlighting common failure modes in complex driving scenarios:
 
