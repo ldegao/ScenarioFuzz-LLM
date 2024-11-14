@@ -128,14 +128,14 @@ source /opt/ros/melodic/setup.bash
 
 * Testing Autoware
 ```sh
-cd ./TM-fuzzer/script
-./test.sh autoware 0.4 3 3600
+cd ./script
+./test.py autoware 0.4 3 3600
 ```
 * Testing Behavior Agent
 
 ```sh
 cd ./script
-./test.sh behavior 0.4 3 3600
+./test.py behavior 0.4 3 3600
 ```
 
 ## Data Availability
