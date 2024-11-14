@@ -31,11 +31,121 @@ This repository includes the following components:
 
 To get started, follow these instructions to set up the environment and run your first scenario tests.
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/ldegao/ScenarioFuzz-LLM.git
+### 1. Install CARLA 0.9.13
 
+#### Installing 
+Please refer to the official CARLA installation guide:
+[Installing Carla from docker](https://carla.readthedocs.io/en/0.9.13/download/)
 
+Or just pull by:
+```
+docker pull carlasim/carla:0.9.13
+```
+
+#### Quick-running Carla
+Carla can be run using a wrapper script `run_carla.sh`.
+If you have multiple GPUs installed, it is recommended that
+you "pin" Carla simulator to one of the GPUs (other than #0).
+You can do that by opening `run_carla.sh` and modifying the following:
+```
+-e NVIDIA_VISIBLE_DEVICES={DESIRED_GPU_ID} --gpus 'device={DESIRED_GPU_ID}
+```
+
+To run carla simulator, execute the script:
+```sh
+$ ./run_carla.sh
+```
+It will run carla simulator container, and name it carla-${USER} .
+
+To stop the container, do:
+```sh
+$ docker rm -f carla-${USER}
+```
+
+### 2. Install carla-autoware docker
+
+Please refer to the official [carla-autoware](https://github.com/carla-simulator/carla-autoware) installation guide, and in order to fit our own mechine (which works without external network access capabilities), and make it work in TM-fuzzer, we make some modifications in [our own forks](https://github.com/cfs4819/carla-autoware/tree/TMfuzz).
+
+Our Modifications:
+- Add *proxy server*, *nameserver*, *ros source* in the dockerfile, which can be deleted if you don't need them.
+- Add our own `entrypoint.sh` so we can run simulation directly after the container is started.
+- Add a shell script `pub_initialpose.py` so we can easily change the initial pose of the ego vehicle.
+- Add a shell script `reload_autoware.sh` so we can easily reload the simulation without restarting the container.
+- Add some camera in `objects.json` for recording the simulation.
+- Upgraded the carla version to 0.9.13, file changed in `update_sim_code.patch`, `carla-autoware-agent/launch/carla_autoware_agent.launch`
+
+So, first clone the carla-autoware repo modified by us:
+
+```sh
+git clone https://github.com/cfs4819/carla-autoware/tree/TMfuzz
+```
+then make some modifications in `Dockerfile` depends on your mechine.
+
+Then, download the additional files
+
+```sh
+cd carla-autoware/
+git clone https://bitbucket.org/carla-simulator/autoware-contents.git
+```
+
+Last, build the carla-autoware repo
+
+```sh
+./build.sh
+```
+
+### 3.Installing ROS-melodic
+
+ROS is required on the host in order for TM-Fuzzer to communicate with
+the Autoware container.
+
+```sh
+sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+sudo apt install curl
+curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+sudo apt update
+sudo apt install ros-melodic-desktop-full
+source /opt/ros/melodic/setup.bash
+```
+### 4.Installing other dependent environments
+
+```sh
+pip install -r requirements.txt
+```
+### 2. Prepare environment
+
+```sh
+mkdir -p /tmp/fuzzerdata
+sudo chmod 777 /tmp/fuzzerdata
+mkdir -p bagfiles
+sudo chmod 777 $HOME/.Xauthority
+source /opt/ros/melodic/setup.bash
+```
+
+### 3. Run fuzzing
+
+* Testing Autoware
+```sh
+cd ./TM-fuzzer/script
+./test.sh autoware 0.4 3 3600
+```
+* Testing Behavior Agent
+
+```sh
+cd ./script
+./test.sh behavior 0.4 3 3600
+```
+
+## Data Availability
+
+The experimental data, including datasets, results, and unique violation scenarios identified by ScenarioFuzz-LLM, is available for download. Access the data here: 
+[Experimental Data - Google Drive](https://drive.google.com/file/d/179mu5w462AwPAI4bms6FHQ1WVwMmxdNy/view?usp=drive_link)
+
+## Cite Our Works
+
+```tex
+coming soon
+```
 
 ## License
 
