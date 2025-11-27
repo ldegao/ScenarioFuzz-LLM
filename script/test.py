@@ -1,6 +1,7 @@
 import subprocess
 import time
 import select
+import socket
 from types import SimpleNamespace
 
 import torch
@@ -29,6 +30,7 @@ client, world, G, blueprint_library, town_map = None, None, None, None, None
 accumulated_trace_graphs = []
 autoware_container = None
 exec_state = states.ExecState()
+DEFAULT_SIM_PORT = 4000
 
 import fuzzer
 
@@ -81,7 +83,7 @@ def run_command(command, wait=True):
     return process
 
 
-def init_environment():
+def init_environment(sim_port=DEFAULT_SIM_PORT):
     """Equivalent to init.sh functionality."""
     fuzzerdata_dir = f"/tmp/fuzzerdata/{os.getlogin()}"
     docker_name = f"carla-{os.getlogin()}"
@@ -102,7 +104,7 @@ def init_environment():
     docker_exists, _ = run_command(f"docker ps -a --filter name={docker_name} --format '{{{{.Names}}}}'")
     if not docker_exists:
         print(f"Docker container {docker_name} doesn't exist. Running run_carla()...")
-        run_carla()
+        run_carla(port=sim_port)
 
     # Remove files in fuzzerdata_dir
     for filename in os.listdir(fuzzerdata_dir):
@@ -122,17 +124,30 @@ def init_environment():
         shutil.rmtree("../data/seed-artifact")
         print("Removed ../data/seed-artifact directory")
 
-    # Remove specific Docker containers
+# Remove specific Docker containers
     containers, _ = run_command("docker ps -a --filter ancestor=carla-autoware:improved-record --format='{{.ID}}'")
     if containers:
         run_command(f"docker rm -f {containers}")
         print(f"Removed Docker containers: {containers}")
 
 
-def run_carla():
+def wait_for_carla_server(port, timeout=90, interval=2):
+    """Poll the CARLA RPC port until it becomes available."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=interval):
+                print(f"[INFO] CARLA server on port {port} is ready.")
+                return True
+        except (OSError, ConnectionError):
+            time.sleep(interval)
+    print(f"[WARNING] CARLA server on port {port} did not become ready within {timeout} seconds.")
+    return False
+
+
+def run_carla(port=DEFAULT_SIM_PORT):
     """Equivalent to run_carla.sh functionality."""
     # idle_gpu = 0
-    port = 4000
     carla_cmd = f"./CarlaUE4.sh -RenderOffScreen -carla-rpc-port={port} -quality-level=Epic && /bin/bash"
     docker_name = f"carla-{os.getlogin()}"
 
@@ -141,8 +156,10 @@ def run_carla():
     # command = f"docker run --name='carla-{os.getlogin()}' -d --gpus --net=host -v /tmp/.X11-unix:/tmp/.X11-unix:rw carlasim/carla:0.9.13 {carla_cmd}"
     # run_command(command)
     subprocess.Popen(command, shell=True)
-    time.sleep(5)
-    print(f"Started CARLA Docker container {docker_name}")
+    if wait_for_carla_server(port, timeout=120):
+        print(f"Started CARLA Docker container {docker_name}")
+    else:
+        print(f"[WARNING] CARLA Docker container {docker_name} may not be ready yet.")
 
 
 def save_files():
@@ -213,7 +230,7 @@ def close_processes():
         print(f"Killed process {pid}")
 
 
-def run_test(sim_port, target, density, town, duration):
+def run_test(sim_port, target, density, town, duration, max_failures=3):
     """Directly call the main function from fuzzer.py to run the simulation test."""
 
     # Get default argument values from argparse
@@ -237,9 +254,11 @@ def run_test(sim_port, target, density, town, duration):
 
     start_time = time.time()
 
+    failure_count = 0
+
     while True:
         # Initialize environment
-        init_environment()
+        init_environment(sim_port=sim_port)
 
         current_time = time.time()
         total_duration = current_time - start_time
@@ -254,17 +273,27 @@ def run_test(sim_port, target, density, town, duration):
         try:
             # Directly call the main function from fuzzer.py
             fuzzer.main(args)
-        except (SystemExit, TimeoutError) as e:
-            print(f"Exception caught: {e}. Continuing program execution.")
-            # Perform additional actions or logging as needed
-        except KeyboardInterrupt as e:
-            # Capture any other general exceptions
-            print(f"KeyboardInterrupt")
+            failure_count = 0
+        except KeyboardInterrupt:
+            print(f"\nKeyboardInterrupt: Experiment interrupted by user")
             return
+        except SystemExit as e:
+            print(f"SystemExit: {e}")
+            raise  # Re-raise SystemExit
+        except TimeoutError as e:
+            print(f"TimeoutError: {e}")
+            raise  # Re-raise TimeoutError
         except Exception as e:
-            print(f"Unexpected exception caught: {e}. Continuing program execution.")
-        else:
-            print(f"Unexpected exception caught")
+            print(f"Unexpected exception: {e}")
+            import traceback
+            traceback.print_exc()
+            failure_count += 1
+            if failure_count >= max_failures:
+                print(f"[ERROR] Reached {failure_count} consecutive failures, aborting run.")
+                raise  # Re-raise to ensure error is visible
+            else:
+                print(f"[WARNING] Failure #{failure_count}, retrying after short delay...")
+                time.sleep(2)
 
         os.chdir(current_dir)
         # Check if the Docker container is still running

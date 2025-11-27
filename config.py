@@ -95,6 +95,23 @@ class Config:
 
         # Sim-debug settings
         self.view = c.BIRDSEYE
+        
+        # RAG configuration
+        self.enable_rag = False
+        self.rag_k = 5  # Number of top-k scenarios to retrieve
+        self.rag_config_path = "./config/rag_config.json"
+        
+        # Enhanced RAG configuration
+        self.use_enhanced_rag = False  # Use EnhancedRAGEngine instead of RAGEngine
+        self.use_hybrid_search = True  # Enable hybrid search (vector + BM25)
+        self.hybrid_alpha = 0.7  # Weight for vector retrieval in hybrid search (0-1)
+        self.use_reranking = True  # Enable reranking after retrieval
+        self.reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder model for reranking
+        
+        # Metrics configuration
+        self.enable_rag_metrics = False
+        self.metrics_output_dir = None
+        self.metrics_config_path = "./config/metrics_config.json"
 
     def set_paths(self):
         self.queue_dir = os.path.join(self.out_dir, "queue")

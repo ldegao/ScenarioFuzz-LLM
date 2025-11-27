@@ -1,0 +1,41 @@
+{
+  "parameter_coverage": {
+    "enabled": true,
+    "parameter_grid": {
+      "weather_cloud": [0, 25, 50, 75, 100],
+      "weather_rain": [0, 25, 50, 75, 100],
+      "weather_fog": [0, 25, 50, 75, 100],
+      "npc_count": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "speed_range": ["low", "medium", "high"],
+      "route_type": ["straight", "curve", "intersection", "highway"]
+    }
+  },
+  "behavior_coverage": {
+    "enabled": true,
+    "n_clusters": 10,
+    "use_dbscan": false
+  },
+  "trajectory_diversity": {
+    "enabled": true,
+    "n_clusters": 10,
+    "use_dtw": true
+  },
+  "behavior_matrix": {
+    "enabled": true,
+    "behavior_labels": [
+      "collision",
+      "lane_invasion",
+      "speeding",
+      "hard_brake",
+      "hard_acceleration",
+      "lane_change",
+      "following",
+      "cut_in",
+      "emergency_stop",
+      "traffic_violation",
+      "stuck",
+      "red_light_violation"
+    ]
+  }
+}
+

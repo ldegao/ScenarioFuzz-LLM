@@ -162,6 +162,41 @@ def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int 
     return "Request failed after maximum retries."
 
 
+def call_gpt_with_rag(question: str, rag_engine, model_version: str = "gpt-4-turbo", 
+                      max_tokens: int = 1500, retries: int = 3) -> str:
+    """
+    Call GPT with RAG enhancement
+    
+    Args:
+        question: Base question/prompt
+        rag_engine: RAGEngine instance
+        model_version: GPT model version to use
+        max_tokens: Maximum tokens for response
+        retries: Number of retry attempts
+        
+    Returns:
+        GPT response string
+    """
+    # Extract seed scenario from question (simplified - in practice would parse more carefully)
+    # Use RAG to retrieve relevant scenarios
+    try:
+        retrieved = rag_engine.retrieve_relevant_scenarios(question, k=rag_engine.top_k)
+        
+        # Build enhanced prompt
+        enhanced_prompt = rag_engine.generate_enhanced_prompt(question, retrieved)
+        
+        # Call GPT with enhanced prompt
+        response = call_gpt(enhanced_prompt, model_version=model_version, 
+                           max_tokens=max_tokens, retries=retries)
+        
+        return response
+    except Exception as e:
+        print(f"[RAG-GPT] Error in RAG-enhanced call: {e}")
+        # Fallback to regular GPT call
+        return call_gpt(question, model_version=model_version, 
+                       max_tokens=max_tokens, retries=retries)
+
+
 def extract_json(response):
     try:
         json_text = re.search(r'{.*}', response, re.DOTALL).group(0)

@@ -254,6 +254,7 @@ def extract_answer1_overall_similarity(response_text):
 def evaluation(ind: Scenario):
     global autoware_container
     global Scenario_database
+    global conf
     min_dist = 99999
     nova = 0
     overall_similarity = 0
@@ -261,6 +262,9 @@ def evaluation(ind: Scenario):
     s_name = f'Scenario_{ind.scenario_id:05}'
     # run test here
     mutate_weather_fixed(ind)
+    # Get conf from scenario if available (only check once)
+    if not 'conf' in globals() or conf is None:
+        conf = ind.conf if hasattr(ind, 'conf') else None
     signal.alarm(15 * 60)  # timeout after 15 min
     print("timeout after 15 min")
     try:
@@ -274,21 +278,106 @@ def evaluation(ind: Scenario):
             exit(0)
         min_dist = ind.state.min_dist
 
-        for i in range(1, len(ind.state.speed)):
-            acc = abs(ind.state.speed[i] - ind.state.speed[i - 1])
-            nova += acc
-        nova = nova / len(ind.state.speed)
+        # Calculate NOVA (speed variation)
+        if ind.state.speed and len(ind.state.speed) > 1:
+            for i in range(1, len(ind.state.speed)):
+                acc = abs(ind.state.speed[i] - ind.state.speed[i - 1])
+                nova += acc
+            nova = nova / len(ind.state.speed)
+        else:
+            nova = 0
         # gpt
         scenario_description = str(
             gpt.get_frame_data(f"./data/output/time_record/gid:{ind.generation_id}_sid:{ind.scenario_id}.json",
                                ind.state.min_dist_frame)).replace("\n", "").replace(' ', '')
+        
+        # Use RAG to retrieve relevant scenarios if enabled, otherwise use Scenario_database
+        
+        if conf and conf.enable_rag:
+            try:
+                # Choose RAG engine based on configuration
+                if conf.use_enhanced_rag:
+                    from rag_module import EnhancedRAGEngine
+                    # Initialize Enhanced RAG engine if not exists
+                    if not hasattr(evaluation, 'rag_engine'):
+                        evaluation.rag_engine = EnhancedRAGEngine(
+                            top_k=conf.rag_k,
+                            use_hybrid_search=conf.use_hybrid_search,
+                            hybrid_alpha=conf.hybrid_alpha,
+                            use_reranking=conf.use_reranking,
+                            reranker_model=conf.reranker_model
+                        )
+                        evaluation.rag_engine.initialize(load_mock_data=True)
+                        # Add existing Scenario_database to RAG knowledge base
+                        for key, desc in Scenario_database.items():
+                            evaluation.rag_engine.add_scenario_to_knowledge_base({
+                                'id': f'db_{key}',
+                                'description': desc
+                            }, rebuild_index=False)
+                        # Rebuild index after adding all existing scenarios
+                        scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
+                        if len(scenario_descriptions) > 0:
+                            vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
+                            scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
+                            evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
+                            # Refit BM25 if hybrid search is enabled
+                            if conf.use_hybrid_search and evaluation.rag_engine.hybrid_retriever:
+                                evaluation.rag_engine.hybrid_retriever.fit_bm25(scenario_descriptions)
+                        print(f"[EnhancedRAG] Initialized with {len(scenario_descriptions)} scenarios from Scenario_database")
+                else:
+                    from rag_module import RAGEngine
+                    # Initialize RAG engine if not exists
+                    if not hasattr(evaluation, 'rag_engine'):
+                        evaluation.rag_engine = RAGEngine(top_k=conf.rag_k)
+                        evaluation.rag_engine.initialize(load_mock_data=True)
+                        # Add existing Scenario_database to RAG knowledge base
+                        for key, desc in Scenario_database.items():
+                            evaluation.rag_engine.add_scenario_to_knowledge_base({
+                                'id': f'db_{key}',
+                                'description': desc
+                            }, rebuild_index=False)
+                        # Rebuild index after adding all existing scenarios
+                        scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
+                        if len(scenario_descriptions) > 0:
+                            vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
+                            scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
+                            evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
+                        print(f"[RAG] Initialized with {len(scenario_descriptions)} scenarios from Scenario_database")
+                
+                # Retrieve relevant scenarios using RAG
+                scenario_dict_str = evaluation.rag_engine.retrieve_and_format_for_prompt(
+                    scenario_description, k=conf.rag_k
+                )
+                print(f"[RAG] Retrieved {conf.rag_k} relevant scenarios for prompt")
+                
+            except Exception as e:
+                print(f"[RAG] Warning: RAG retrieval failed, falling back to Scenario_database: {e}")
+                scenario_dict_str = str(Scenario_database)
+        else:
+            # Original logic: use Scenario_database
+            scenario_dict_str = str(Scenario_database)
+        
         question = prompt + "\n scenario snapshot:\n" + str(
-            scenario_description + "\n___\n Scenario-dict\n" + str(Scenario_database))
+            scenario_description + "\n___\n Scenario-dict\n" + scenario_dict_str)
         response = gpt.call_gpt(question, model_version="gpt-4-turbo", max_tokens=1500)
         print("Response:", response)
         response_json = gpt.extract_json(response)
         if response_json is not None:
+            # Update Scenario_database (for backward compatibility and fallback)
             Scenario_database = gpt.add_answer1_to_database(response_json, Scenario_database, 30)
+            
+            # Also add to RAG knowledge base if enabled
+            if conf and conf.enable_rag and hasattr(evaluation, 'rag_engine'):
+                try:
+                    answer1_desc = response_json.get("answer1", {}).get("Description", "")
+                    if answer1_desc:
+                        evaluation.rag_engine.add_scenario_to_knowledge_base({
+                            'id': f'gpt_gen_{ind.generation_id}_scen_{ind.scenario_id}',
+                            'description': answer1_desc
+                        }, rebuild_index=False)
+                except Exception as e:
+                    print(f"[RAG] Warning: Failed to add to RAG knowledge base: {e}")
+            
             overall_similarity = int(gpt.get_overall_similarity(response_json))
             answer3_vehicle_info = gpt.get_answer3_vehicle_info(response_json)
             print("Overall Similarity:", overall_similarity)
@@ -298,6 +387,17 @@ def evaluation(ind: Scenario):
             new_key = str(int(max(Scenario_database.keys(), key=int)) + 1) if Scenario_database else "0"
             Scenario_database[new_key] = answer1_description
             Scenario_database = OrderedDict(Scenario_database)
+            
+            # Also add to RAG knowledge base if enabled
+            if conf and conf.enable_rag and hasattr(evaluation, 'rag_engine'):
+                try:
+                    evaluation.rag_engine.add_scenario_to_knowledge_base({
+                        'id': f'extracted_{new_key}',
+                        'description': answer1_description
+                    }, rebuild_index=False)
+                except Exception as e:
+                    print(f"[RAG] Warning: Failed to add to RAG knowledge base: {e}")
+            
             answer3_vehicle_info = {}  # Leave answer3_vehicle_info empty
             print("Extracted Answer1 Description:", answer1_description)
             print("Extracted Overall Similarity:", overall_similarity)
@@ -327,6 +427,41 @@ def evaluation(ind: Scenario):
     # mutation loop ends
     if ind.found_error:
         print("[-]error detected. start a new cycle with a new seed")
+    
+    # Calculate additional metrics if enabled
+    if conf and conf.enable_rag_metrics:
+        try:
+            from metrics import ParameterCoverage, BehaviorCoverage, TrajectoryDiversity, BehaviorMatrix
+            
+            # Store metrics results in scenario for later aggregation
+            if not hasattr(ind, 'rag_metrics'):
+                ind.rag_metrics = {}
+            
+            # Parameter Coverage (PC)
+            pc_calculator = ParameterCoverage()
+            pc_score = pc_calculator.calculate_coverage([ind])
+            ind.rag_metrics['pc'] = pc_score
+            
+            # Behavior Coverage (PEC)
+            pec_calculator = BehaviorCoverage()
+            pec_score = pec_calculator.calculate_coverage([ind])
+            ind.rag_metrics['pec'] = pec_score
+            
+            # Trajectory Diversity (TCD)
+            tcd_calculator = TrajectoryDiversity()
+            tcd_results = tcd_calculator.calculate_coverage([ind])
+            ind.rag_metrics['tcd'] = tcd_results.get('diversity_score', 0.0)
+            
+            # Behavior Matrix Coverage (BCM)
+            bcm_calculator = BehaviorMatrix()
+            bcm_results = bcm_calculator.calculate_coverage([ind])
+            ind.rag_metrics['bcm'] = bcm_results.get('coverage_ratio', 0.0)
+            
+        except ImportError as e:
+            print(f"[Metrics] Warning: Could not import metrics modules: {e}")
+        except Exception as e:
+            print(f"[Metrics] Warning: Error calculating metrics: {e}")
+    
     return min_dist, nova, 100 - overall_similarity
 
 
@@ -339,16 +474,17 @@ def mut_npc_list(ind: Scenario):
         return ind.npc_list
     if bottleneck:
         # mutate the chosen one by GPT
-        for npc in ind.npc_list:
-            if npc.instance_id == ind.mutate_info["Vehicle ID"]:
-                npc.speed = ind.mutate_info["Speed"]
-                if town_map is not None:
-                    location = carla.Location(x=ind.mutate_info["Location"][0], y=ind.mutate_info["Location"][1],
-                                              z=0.5)
-                    waypoint = town_map.get_waypoint(location, project_to_road=True,
-                                                     lane_type=carla.libcarla.LaneType.Driving)
-                    npc.spawn_point = waypoint
-                return ind.npc_list
+        if ind.mutate_info and isinstance(ind.mutate_info, dict) and "Vehicle ID" in ind.mutate_info:
+            for npc in ind.npc_list:
+                if npc.instance_id == ind.mutate_info["Vehicle ID"]:
+                    npc.speed = ind.mutate_info["Speed"]
+                    if town_map is not None and "Location" in ind.mutate_info:
+                        location = carla.Location(x=ind.mutate_info["Location"][0], y=ind.mutate_info["Location"][1],
+                                                  z=0.5)
+                        waypoint = town_map.get_waypoint(location, project_to_road=True,
+                                                         lane_type=carla.libcarla.LaneType.Driving)
+                        npc.spawn_point = waypoint
+                    return ind.npc_list
         return ind.npc_list
     mut_pb = random.random()
     random_index = random.randint(0, len(ind.npc_list) - 1)
@@ -371,6 +507,50 @@ def mut_npc_list(ind: Scenario):
 
 
 def mut_scenario(ind: Scenario):
+    global conf
+    # Get conf from scenario if not available globally
+    if not 'conf' in globals() or conf is None:
+        conf = ind.conf if hasattr(ind, 'conf') else None
+    
+    # Use RAG-guided mutation if enabled and bottleneck detected
+    if conf and conf.enable_rag and bottleneck:
+        try:
+            # Choose RAG engine based on configuration
+            if conf.use_enhanced_rag:
+                from rag_module import EnhancedRAGEngine
+                # Initialize Enhanced RAG engine (lazy initialization)
+                if not hasattr(mut_scenario, 'rag_engine'):
+                    mut_scenario.rag_engine = EnhancedRAGEngine(
+                        top_k=conf.rag_k,
+                        use_hybrid_search=conf.use_hybrid_search,
+                        hybrid_alpha=conf.hybrid_alpha,
+                        use_reranking=conf.use_reranking,
+                        reranker_model=conf.reranker_model
+                    )
+                    mut_scenario.rag_engine.initialize(load_mock_data=True)
+            else:
+                from rag_module import RAGEngine
+                # Initialize RAG engine (lazy initialization)
+                if not hasattr(mut_scenario, 'rag_engine'):
+                    mut_scenario.rag_engine = RAGEngine(top_k=conf.rag_k)
+                    mut_scenario.rag_engine.initialize(load_mock_data=True)
+            
+            # Generate scenario description from current state
+            scenario_desc = f"Scenario with {len(ind.npc_list)} NPCs, weather: {ind.weather}"
+            
+            # Use RAG to generate enhanced scenario
+            rag_result = mut_scenario.rag_engine.generate_scenario(scenario_desc, use_gpt=False)
+            
+            # Apply retrieved scenarios for guidance (simplified integration)
+            # In full implementation, this would modify NPCs based on RAG suggestions
+            print(f"[RAG] Retrieved {len(rag_result.get('retrieved_scenarios', []))} relevant scenarios")
+            
+        except ImportError as e:
+            print(f"[RAG] Warning: Could not import RAG modules: {e}")
+        except Exception as e:
+            print(f"[RAG] Warning: Error in RAG-guided mutation: {e}")
+    
+    # Standard mutation
     ind.npc_list = mut_npc_list(ind)
     return ind,
 
@@ -622,7 +802,7 @@ def check_diversity_bottleneck(current_pareto_front, archive, generations=10, ep
 
 def main(args=None):
     # STEP 0: init env
-    global client, world, G, blueprint_library, town_map, bottleneck
+    global client, world, G, blueprint_library, town_map, bottleneck, conf
     logging.basicConfig(filename='./data/record.log', filemode='a', level=logging.INFO,
                         format='%(asctime)s - %(message)s')
     copyreg.pickle(carla.libcarla.Location, utils.carla_location_pickle, utils.carla_location_unpickle)
@@ -631,6 +811,8 @@ def main(args=None):
     # copyreg.pickle(carla.libcarla.ActorBlueprint, carla_ActorBlueprint_pickle, carla_ActorBlueprint_unpickle)
 
     conf, town, town_map, exec_state.client, exec_state.world, exec_state.G = init_env(args)
+    # Make conf globally accessible for evaluation function
+    globals()['conf'] = conf
     world = exec_state.world
     blueprint_library = world.get_blueprint_library()
     # if conf.agent_type == c.AUTOWARE:
@@ -673,12 +855,39 @@ def main(args=None):
             test_scenario = future.result(timeout=15)
         population.append(test_scenario)
         test_scenario.scenario_id = len(population)
+    # Track total scenarios generated
+    total_scenarios = POP_SIZE  # Initial population
+    
+    # Get experiment start time and timeout if set
+    experiment_start_time = getattr(conf, 'experiment_start_time', None)
+    experiment_timeout = getattr(conf, 'experiment_timeout', None)
+    
     while True:
         # Main loop
         curr_gen += 1
         if curr_gen > MAX_GEN:
             break
+        
+        # Check scenario limit if set
+        if hasattr(conf, 'max_scenarios') and conf.max_scenarios > 0:
+            if total_scenarios >= conf.max_scenarios:
+                print(f"Reached scenario limit: {total_scenarios}/{conf.max_scenarios}")
+                break
+        
+        # Check time limit if set
+        if experiment_start_time and experiment_timeout:
+            elapsed_time = time.time() - experiment_start_time
+            if elapsed_time >= experiment_timeout:
+                print(f"Reached time limit: {elapsed_time:.0f}s / {experiment_timeout:.0f}s")
+                break
+        
         print(f' ====== GA Generation {curr_gen} ====== ')
+        print(f'Total scenarios generated: {total_scenarios}')
+        if experiment_start_time and experiment_timeout:
+            elapsed = time.time() - experiment_start_time
+            remaining = experiment_timeout - elapsed
+            print(f'Time elapsed: {elapsed:.0f}s, Remaining: {remaining:.0f}s')
+        
         # Vary the population
         offspring = algorithms.varOr(
             population, toolbox, OFF_SIZE, CXPB, MUTPB)
@@ -697,6 +906,9 @@ def main(args=None):
         # Select the next generation population
         population[:] = toolbox.select(population + offspring, POP_SIZE)
         record = stats.compile(population)
+        
+        # Update scenario count
+        total_scenarios += len(offspring)
 
         # Combined Bottleneck Detection
         if check_diversity_bottleneck(current_pareto_front, archive, generations=10, epsilon=1e-6):
