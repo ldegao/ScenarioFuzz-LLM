@@ -17,6 +17,12 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 ## Key Features
 
 - **LLM-Guided Mutation**: ScenarioFuzz-LLM incorporates LLMs as expert agents to guide mutations when the genetic algorithm encounters stagnation, enhancing the diversity of testing scenarios.
+- **RAG-Enhanced Generation**: New RAG (Retrieval-Augmented Generation) module provides semantic search and context-aware scenario generation for improved diversity.
+- **Multi-Dimensional Evaluation**: Four new evaluation metrics (PC, PEC, TCD, BCM) provide comprehensive coverage assessment:
+  - **PC (Parameter Coverage)**: Parameter space combination coverage
+  - **PEC (Behavior Coverage)**: Physical behavior equivalence class coverage
+  - **TCD (Trajectory Diversity)**: Trajectory pattern diversity using DTW and entropy
+  - **BCM (Behavior Matrix)**: Behavior combination coverage
 - **Multi-Objective Optimization**: Evaluates scenarios based on metrics such as minimum vehicle distance, time-to-collision, and scenario variability to generate meaningful and diverse test cases.
 - **Broad Edge Case Coverage**: Allows the testing framework to explore a wide array of potential ADS failures by continuously adapting and evolving test scenarios.
 - **Integration with CARLA Simulator**: Provides a comprehensive testing setup for ADS simulation using CARLA, making ScenarioFuzz-LLM compatible with the Autoware.ai platform.
@@ -25,9 +31,33 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 
 This repository includes the following components:
 - **Source Code**: Implementing the ScenarioFuzz-LLM framework and its integration with CARLA.
+- **RAG Module**: Retrieval-augmented generation for semantic-enhanced scenario generation (`rag_module/`).
+- **Metrics Module**: Multi-dimensional evaluation metrics (PC, PEC, TCD, BCM) (`metrics/`).
+- **Visualization Module**: Tools for generating charts and reports (`visualization/`).
 - **Simulation Scripts**: Scripts to set up and run tests on CARLA, including scenario generation, mutation processes, and defect logging.
 - **Pre-trained Models and Prompts**: Optimized prompts and models for guided scenario mutation and diversity evaluation.
 - **Data and Results**: Dataset for initial test cases, along with results and statistics of our experiments, demonstrating the effectiveness of ScenarioFuzz-LLM.
+
+## New Features (RAG-ScenarioFuzz)
+
+### RAG-Enhanced Scenario Generation
+
+The framework now includes a RAG module that:
+- Uses semantic search to retrieve relevant scenarios from a knowledge base
+- Provides context-aware prompts for LLM-based scenario generation
+- Improves scenario diversity through knowledge-guided mutations
+
+See `RAG_USAGE.md` for detailed usage instructions.
+
+### Multi-Dimensional Evaluation Metrics
+
+Four new evaluation metrics provide comprehensive coverage assessment:
+- **Parameter Coverage (PC)**: Measures parameter space combination coverage
+- **Behavior Coverage (PEC)**: Evaluates physical behavior equivalence class coverage
+- **Trajectory Diversity (TCD)**: Measures trajectory pattern diversity using DTW
+- **Behavior Matrix Coverage (BCM)**: Evaluates behavior combination coverage
+
+These metrics can be enabled via configuration flags (see `RAG_USAGE.md`).
 
 ## Getting Started
 

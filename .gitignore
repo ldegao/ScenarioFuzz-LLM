@@ -30,3 +30,5 @@ venv/
 *.pth
 *.npy
 api.json
+# Experiment outputs
+experiment_results/

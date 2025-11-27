@@ -1,0 +1,8 @@
+{
+  "model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "faiss_index_type": "IndexFlatL2",
+  "knowledge_base_path": "./data/knowledge_base/",
+  "vector_dim": 384,
+  "top_k": 5
+}
+
