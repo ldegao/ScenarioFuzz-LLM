@@ -30,11 +30,11 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 ## Repository Overview
 
 This repository includes the following components:
-- **Source Code**: Implementing the ScenarioFuzz-LLM framework and its integration with CARLA.
+- **Core Fuzzing Engine**: The core GA-based scenario fuzzer and its CARLA integration (`fuzzer.py`, `scenario.py`, `states.py`, `config/`, `script/`).
 - **RAG Module**: Retrieval-augmented generation for semantic-enhanced scenario generation (`rag_module/`).
 - **Metrics Module**: Multi-dimensional evaluation metrics (PC, PEC, TCD, BCM) (`metrics/`).
 - **Visualization Module**: Tools for generating charts and reports (`visualization/`).
-- **Simulation Scripts**: Scripts to set up and run tests on CARLA, including scenario generation, mutation processes, and defect logging.
+- **Experiments Package**: Reproducible paper experiments (ScenarioFuzz-LLM, RAG-ScenarioFuzz, TM-Fuzzer), with runners, progress tracking, aggregation and analysis (`experiments/`; see `experiments/docs/PAPER_EXPERIMENTS.md` and `experiments/docs/QUICK_START.md`).
 - **Pre-trained Models and Prompts**: Optimized prompts and models for guided scenario mutation and diversity evaluation.
 - **Data and Results**: Dataset for initial test cases, along with results and statistics of our experiments, demonstrating the effectiveness of ScenarioFuzz-LLM.
 
@@ -46,8 +46,7 @@ The framework now includes a RAG module that:
 - Uses semantic search to retrieve relevant scenarios from a knowledge base
 - Provides context-aware prompts for LLM-based scenario generation
 - Improves scenario diversity through knowledge-guided mutations
-
-See `RAG_USAGE.md` for detailed usage instructions.
+For end-to-end experimental usage of RAG-ScenarioFuzz, see `experiments/docs/PAPER_EXPERIMENTS.md` or the quick commands in `experiments/docs/QUICK_START.md`.
 
 ### Multi-Dimensional Evaluation Metrics
 
@@ -57,7 +56,7 @@ Four new evaluation metrics provide comprehensive coverage assessment:
 - **Trajectory Diversity (TCD)**: Measures trajectory pattern diversity using DTW
 - **Behavior Matrix Coverage (BCM)**: Evaluates behavior combination coverage
 
-These metrics can be enabled via configuration flags (see `RAG_USAGE.md`).
+These metrics are automatically collected and aggregated in the new experiment pipeline (see `experiments/PAPER_EXPERIMENTS.md` for details).
 
 ## Getting Started
 
@@ -144,6 +143,31 @@ source /opt/ros/melodic/setup.bash
 ```sh
 pip install -r requirements.txt
 ```
+
+### 5. (Recommended) Use a Python virtual environment and run tests
+
+For development and testing it is recommended to use a virtual environment
+to isolate Python dependencies:
+
+```sh
+cd /path/to/ScenarioFuzz-LLM
+
+# Create virtual environment (only once)
+python3 -m venv .venv
+
+# Activate it (bash / zsh)
+source .venv/bin/activate
+
+# Install project dependencies
+pip install -r requirements.txt
+
+# Install test dependencies
+pip install pytest
+
+# Run unit tests for non-CARLA modules
+pytest -q
+```
+
 ### 2. Prepare environment
 
 ```sh
@@ -154,7 +178,7 @@ sudo chmod 777 $HOME/.Xauthority
 source /opt/ros/melodic/setup.bash
 ```
 
-### 3. Run fuzzing
+### 3. Run fuzzing (low-level TM-Fuzzer compatibility)
 
 * Testing Autoware
 ```sh
@@ -167,6 +191,83 @@ cd ./script
 cd ./script
 ./test.py behavior 0.4 3 3600
 ```
+
+## Reproducing Paper Experiments (Sections 3.3–3.5)
+
+The recommended way to reproduce the experiments in the paper is to use the unified `experiments/` pipeline. It consists of three steps:
+
+### 1. Run three methods (ScenarioFuzz-LLM / RAG-ScenarioFuzz / TM-Fuzzer)
+
+From the project root, **always use the project virtual environment**:
+
+```sh
+cd /path/to/ScenarioFuzz-LLM
+source venv/bin/activate        # or: source .venv/bin/activate
+
+# ScenarioFuzz-LLM (behavior model, quantitative example)
+python -m experiments.runners.run_scenariofuzz_llm \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results
+
+# RAG-ScenarioFuzz (behavior model, quantitative example)
+python -m experiments.runners.run_rag_scenariofuzz \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results
+
+# TM-Fuzzer baseline (Autoware target, quantitative example)
+python -m experiments.runners.run_tmfuzzer \
+  --num-scenarios 1000 \
+  --target autoware \
+  --output-root ./experiment_results
+```
+
+Each run creates a directory of the form:
+
+- `./experiment_results/<MethodName>/<experiment_id>/...`
+
+where `<MethodName>` is one of `ScenarioFuzz-LLM`, `RAG-ScenarioFuzz`, or `TM-Fuzzer`.
+
+### 2. Aggregate metrics across all runs
+
+After the three methods have been run (possibly multiple times), aggregate the per-run metrics:
+
+```sh
+python -m experiments.aggregation.main
+```
+
+This scans `./experiment_results` for `metrics_summary.json` files and produces:
+
+- `./experiment_results/all_methods_results.json`
+
+which contains all methods and runs in a single JSON structure.
+
+### 3. Generate figures and reports
+
+Finally, generate figures and human-readable reports:
+
+```sh
+# Figures (PC bar chart, multi-metric radar chart)
+python -m experiments.analysis.generate_figures \
+  --results-file ./experiment_results/all_methods_results.json \
+  --output-dir ./reports/figs
+
+# Markdown + JSON reports
+python -m experiments.analysis.generate_reports \
+  --results-file ./experiment_results/all_methods_results.json \
+  --output-dir ./reports \
+  --experiment-name Thesis_Experiment
+```
+
+You can also run both steps with a single command:
+
+```sh
+python -m experiments.analysis.main
+```
+
+For more detailed、step-by-step commands and troubleshooting tips, refer to:
+
+- `experiments/docs/PAPER_EXPERIMENTS.md`
+- `experiments/docs/QUICK_START.md`
 
 ## Data Availability
 

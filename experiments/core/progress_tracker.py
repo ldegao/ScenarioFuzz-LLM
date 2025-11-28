@@ -28,11 +28,8 @@ class ProgressTracker:
     def _load_checkpoint(self) -> Dict:
         """Load progress from checkpoint file"""
         if os.path.exists(self.checkpoint_file):
-            try:
-                with open(self.checkpoint_file, 'r') as f:
-                    return json.load(f)
-            except:
-                return {}
+            with open(self.checkpoint_file, 'r') as f:
+                return json.load(f)
         return {}
     
     def _save_checkpoint(self):
@@ -117,9 +114,19 @@ class ProgressTracker:
         if prog['completed_scenarios'] >= prog['target_scenarios']:
             return True
         
-        # Check time limit
+        # Check time limit (Python 3.6 compatibility)
         if prog.get('target_time'):
-            start_time = datetime.fromisoformat(prog['start_time'])
+            start_time_str = prog['start_time']
+            try:
+                if hasattr(datetime, 'fromisoformat'):
+                    start_time = datetime.fromisoformat(start_time_str)
+                else:
+                    start_time = datetime.strptime(
+                        start_time_str.replace('T', ' ').split('.')[0],
+                        '%Y-%m-%d %H:%M:%S'
+                    )
+            except Exception:
+                start_time = datetime.now()
             elapsed = (datetime.now() - start_time).total_seconds()
             if elapsed >= prog['target_time']:
                 return True
@@ -142,11 +149,15 @@ class ProgressTracker:
         prog = self.progress[experiment_id]
         # Python 3.6 compatibility: fromisoformat not available
         start_time_str = prog['start_time']
-        if hasattr(datetime, 'fromisoformat'):
-            start_time = datetime.fromisoformat(start_time_str)
-        else:
-            # Manual parsing for Python 3.6
-            start_time = datetime.strptime(start_time_str.replace('T', ' ').split('.')[0], '%Y-%m-%d %H:%M:%S')
+        try:
+            if hasattr(datetime, 'fromisoformat'):
+                start_time = datetime.fromisoformat(start_time_str)
+            else:
+                # Manual parsing for Python 3.6
+                start_time = datetime.strptime(start_time_str.replace('T', ' ').split('.')[0], '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            # Fallback: treat elapsed time as 0 if parsing fails
+            start_time = datetime.now()
         elapsed = (datetime.now() - start_time).total_seconds()
         
         return {

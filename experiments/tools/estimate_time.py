@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Time Estimation Tool
-Estimates experiment execution time without running experiments
+Time Estimation CLI to project the runtime required for experiments without
+launching CARLA. Now lives under experiments.tools for easier discovery.
 """
 
 import sys
@@ -9,40 +9,56 @@ import os
 import argparse
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from time_estimator import TimeEstimator
+from experiments.core.time_estimator import TimeEstimator
 
 
 def main():
     """Main entry point for time estimation"""
     parser = argparse.ArgumentParser(
-        description='Estimate experiment execution time',
+        description="Estimate experiment execution time",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Estimate time for 100 scenarios
-  python estimate_time.py RAG-ScenarioFuzz --num-scenarios 100
+  python -m experiments.tools.estimate_time RAG-ScenarioFuzz --num-scenarios 100
   
   # Estimate time for all methods
-  python estimate_time.py --all-methods --num-scenarios 100
+  python -m experiments.tools.estimate_time --all-methods --num-scenarios 100
   
   # Estimate time for timed experiment
-  python estimate_time.py RAG-ScenarioFuzz --hours 2
-        """
+  python -m experiments.tools.estimate_time RAG-ScenarioFuzz --hours 2
+        """,
     )
     
-    parser.add_argument('method', type=str, nargs='?',
-                       # Note: DriveFuzz temporarily disabled
-                       choices=['TM-Fuzzer', 'DriveFuzz', 'ScenarioFuzz-LLM', 'RAG-ScenarioFuzz'],
-                       help='Method to estimate (Note: DriveFuzz temporarily disabled)')
-    parser.add_argument('--all-methods', action='store_true',
-                       help='Estimate for all methods (excluding DriveFuzz)')
-    parser.add_argument('--num-scenarios', type=int, default=100,
-                       help='Number of scenarios (default: 100)')
-    parser.add_argument('--hours', type=float, default=None,
-                       help='Duration in hours (alternative to num-scenarios)')
+    parser.add_argument(
+        "method",
+        type=str,
+        nargs="?",
+        # Note: DriveFuzz temporarily disabled
+        choices=["TM-Fuzzer", "DriveFuzz", "ScenarioFuzz-LLM", "RAG-ScenarioFuzz"],
+        help="Method to estimate (Note: DriveFuzz temporarily disabled)",
+    )
+    parser.add_argument(
+        "--all-methods",
+        action="store_true",
+        help="Estimate for all methods (excluding DriveFuzz)",
+    )
+    parser.add_argument(
+        "--num-scenarios",
+        type=int,
+        default=100,
+        help="Number of scenarios (default: 100)",
+    )
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=None,
+        help="Duration in hours (alternative to num-scenarios)",
+    )
     
     args = parser.parse_args()
     
@@ -52,11 +68,15 @@ Examples:
     estimator = TimeEstimator()
     
     # Note: DriveFuzz temporarily disabled
-    methods = ['TM-Fuzzer', 'ScenarioFuzz-LLM', 'RAG-ScenarioFuzz'] if args.all_methods else [args.method]
+    methods = (
+        ["TM-Fuzzer", "ScenarioFuzz-LLM", "RAG-ScenarioFuzz"]
+        if args.all_methods
+        else [args.method]
+    )
     
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("Experiment Time Estimation")
-    print("="*70)
+    print("=" * 70)
     
     total_time = 0
     for method in methods:
@@ -70,7 +90,7 @@ Examples:
             print(f"  Avg time per scenario: {avg_time:.2f} seconds")
         else:
             estimate = estimator.estimate_total_time(method, args.num_scenarios)
-            total_time += estimate['total_seconds']
+            total_time += estimate["total_seconds"]
             print(f"\n{method}:")
             print(f"  Scenarios: {args.num_scenarios}")
             print(f"  Avg time per scenario: {estimate['avg_scenario_time']:.2f} seconds")
@@ -80,7 +100,10 @@ Examples:
     if args.all_methods and not args.hours:
         print(f"\n{'='*70}")
         print(f"Total time (sequential): {total_time/3600:.2f} hours")
-        print(f"Total time (parallel, 2 workers): {max([estimator.estimate_total_time(m, args.num_scenarios)['total_seconds'] for m in methods])/3600:.2f} hours")
+        print(
+            f"Total time (parallel, 2 workers): "
+            f"{max([estimator.estimate_total_time(m, args.num_scenarios)['total_seconds'] for m in methods])/3600:.2f} hours"
+        )
         print(f"{'='*70}")
     
     print()
@@ -88,4 +111,5 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
 

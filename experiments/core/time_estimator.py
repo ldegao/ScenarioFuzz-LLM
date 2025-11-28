@@ -31,11 +31,8 @@ class TimeEstimator:
     def _load_history(self) -> List[Dict]:
         """Load historical timing data"""
         if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, 'r') as f:
-                    return json.load(f)
-            except:
-                return []
+            with open(self.history_file, 'r') as f:
+                return json.load(f)
         return []
     
     def _save_history(self):
