@@ -26,6 +26,9 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 - **Multi-Objective Optimization**: Evaluates scenarios based on metrics such as minimum vehicle distance, time-to-collision, and scenario variability to generate meaningful and diverse test cases.
 - **Broad Edge Case Coverage**: Allows the testing framework to explore a wide array of potential ADS failures by continuously adapting and evolving test scenarios.
 - **Integration with CARLA Simulator**: Provides a comprehensive testing setup for ADS simulation using CARLA, making ScenarioFuzz-LLM compatible with the Autoware.ai platform.
+- **Experiment Continuation**: Continue interrupted experiments seamlessly by resuming from checkpoints with full state recovery (GA population, archive, seed).
+- **Enhanced Reproducibility**: Automatic seed saving and restoration ensures reproducible experiments across runs.
+- **Robust Error Handling**: Improved error recovery mechanisms with automatic CARLA container restart and extended retry limits (1000 attempts, 7 days).
 
 ## Repository Overview
 
@@ -38,7 +41,7 @@ This repository includes the following components:
 - **Pre-trained Models and Prompts**: Optimized prompts and models for guided scenario mutation and diversity evaluation.
 - **Data and Results**: Dataset for initial test cases, along with results and statistics of our experiments, demonstrating the effectiveness of ScenarioFuzz-LLM.
 
-## New Features (RAG-ScenarioFuzz)
+## New Features
 
 ### RAG-Enhanced Scenario Generation
 
@@ -57,6 +60,40 @@ Four new evaluation metrics provide comprehensive coverage assessment:
 - **Behavior Matrix Coverage (BCM)**: Evaluates behavior combination coverage
 
 These metrics are automatically collected and aggregated in the new experiment pipeline (see `experiments/PAPER_EXPERIMENTS.md` for details).
+
+### Experiment Continuation and Reproducibility
+
+**Continue Interrupted Experiments**:
+- Seamlessly resume experiments from checkpoints
+- Automatically restore GA state (population, archive, hall of fame)
+- Preserve random seed for reproducibility
+- Generate additional scenarios without losing progress
+
+**Usage Example**:
+```bash
+# Continue an existing experiment
+python -m experiments.runners.run_scenariofuzz_llm \
+  --continue-experiment ScenarioFuzz-LLM_20251203_210023 \
+  --continue-scenarios 50 \
+  --output-root ./experiment_results
+```
+
+**Enhanced Reproducibility**:
+- Random seeds are automatically saved to checkpoints
+- Seeds are restored when continuing experiments
+- Ensures reproducible scenario generation across runs
+- See `REPRODUCIBILITY_ANALYSIS.md` for detailed analysis
+
+**Robust Error Handling**:
+- Automatic CARLA container restart on connection failures
+- Extended retry limits (1000 attempts, 7 days duration)
+- Graceful handling of individual scenario failures
+- Checkpoint recovery even if checkpoint file is corrupted
+
+For detailed usage instructions, see:
+- `CONTINUE_EXPERIMENT_GUIDE.md` - Complete guide for continuing experiments
+- `REPRODUCIBILITY_ANALYSIS.md` - Reproducibility analysis and best practices
+- `FIXES_MAX_SCENARIOS.md` - Technical details on improvements
 
 ## Getting Started
 
@@ -207,6 +244,12 @@ source venv/bin/activate        # or: source .venv/bin/activate
 # ScenarioFuzz-LLM (behavior model, quantitative example)
 python -m experiments.runners.run_scenariofuzz_llm \
   --num-scenarios 1000 \
+  --output-root ./experiment_results
+
+# Continue an existing experiment (generate 50 more scenarios)
+python -m experiments.runners.run_scenariofuzz_llm \
+  --continue-experiment ScenarioFuzz-LLM_20251203_210023 \
+  --continue-scenarios 50 \
   --output-root ./experiment_results
 
 # RAG-ScenarioFuzz (behavior model, quantitative example)
