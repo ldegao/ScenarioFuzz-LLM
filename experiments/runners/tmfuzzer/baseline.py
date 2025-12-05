@@ -26,6 +26,12 @@ def run_tmfuzzer_quantitative(num_scenarios: int, output_dir: str = "./experimen
     """
     Run TM-Fuzzer quantitative run (converted to timed run via time estimate).
     """
+    # Input validation
+    if num_scenarios <= 0:
+        raise ValueError(f"num_scenarios must be positive, got {num_scenarios}")
+    if num_scenarios > 1000000:
+        raise ValueError(f"num_scenarios too large: {num_scenarios} (max: 1000000)")
+    
     # Estimate time (average 50 seconds per scenario, at least 300 seconds)
     avg_scenario_time = 50.0
     estimated_duration = max(int(num_scenarios * avg_scenario_time), 300)
@@ -35,6 +41,10 @@ def run_tmfuzzer_quantitative(num_scenarios: int, output_dir: str = "./experimen
     print(f"Target scenarios: {num_scenarios}")
     print(f"Estimated duration: {estimated_duration} seconds (~{estimated_duration/3600:.2f} hours)")
     print(f"{'='*60}\n")
+    
+    # Note: This is an estimate. Actual scenario count may vary.
+    # The timed run will stop when time expires, not when scenario count is reached.
+    # For precise scenario counts, consider running multiple timed runs or adjusting duration.
     
     # Locate script directory and test script
     project_root = PROJECT_ROOT

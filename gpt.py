@@ -3,24 +3,41 @@ import glob
 import os
 import random
 import re
+import sys
 
 import requests
 import json
 import time
 from collections import OrderedDict
+from pathlib import Path
 
-with open("api.json") as f:
+# Import token tracker if available
+try:
+    PROJECT_ROOT = Path(__file__).resolve().parent
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from experiments.core.token_tracker import get_tracker
+    _token_tracker_available = True
+except ImportError:
+    _token_tracker_available = False
+
+# Resolve project root so that this module can be imported from any CWD.
+# gpt.py itself lives in the project root directory, so we use its parent.
+PROJECT_ROOT = Path(__file__).resolve().parent
+API_CONFIG_PATH = PROJECT_ROOT / "api.json"
+PROMPT_PATH = PROJECT_ROOT / "prompt.txt"
+
+with open(str(API_CONFIG_PATH), "r") as f:
     config = json.load(f)
 API_KEY = config.get("OPENAI_API_KEY")
 API_QUOTA_LIMIT = 100000  # Example daily quota limit in tokens
-
-prompt_file = "prompt.txt"
 
 PROXY = {
     "http": "http://127.0.0.1:8080",
     "https": "http://127.0.0.1:8080"
 }
-with open(prompt_file, 'r') as f:
+
+with open(str(PROMPT_PATH), "r") as f:
     prompt = f.read()
 
 
@@ -50,7 +67,7 @@ with open(prompt_file, 'r') as f:
 #         return -1
 
 
-def call_gpt4_vision(question: str, image_url: str, max_tokens: int = 100, retries: int = 3) -> str:
+def call_gpt4_vision(question: str, image_url: str, max_tokens: int = 100, retries: int = None) -> str:
     """
     Multimodal call to GPT-4 for image-related questions with retry and quota check.
 
@@ -82,15 +99,27 @@ def call_gpt4_vision(question: str, image_url: str, max_tokens: int = 100, retri
         "temperature": 0.7
     }
 
-    for attempt in range(retries):
+    attempt = 0
+    max_wait_time = 60  # Maximum wait time between retries (seconds)
+    
+    while retries is None or attempt < retries:
+        attempt += 1
         try:
             response = requests.post(url, headers=headers, data=json.dumps(data))
             response.raise_for_status()
             answer = response.json().get("choices", [{}])[0].get("message", {}).get("content", "No response")
             return answer
         except requests.exceptions.RequestException as e:
-            print(f"Request failed, retry {attempt + 1}/{retries}: {e}")
-            time.sleep(2)  # Wait before retrying
+            # Calculate wait time with exponential backoff (capped at max_wait_time)
+            wait_time = min(2 ** min(attempt, 6), max_wait_time)  # Exponential backoff: 2, 4, 8, 16, 32, 60, 60, ...
+            if retries is None:
+                print(f"Request failed, retry {attempt} (infinite retries): {e}")
+                print(f"Waiting {wait_time} seconds before retry...")
+            else:
+                print(f"Request failed, retry {attempt}/{retries}: {e}")
+                print(f"Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
+    
     return "Request failed after maximum retries."
 
 
@@ -113,16 +142,16 @@ def get_frame_data(json_path, default_frame_number=-1):
         return data[str(frame_number)]
 
 
-def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int = 100, retries: int = 3) -> str:
+def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int = 100, retries: int = None) -> str:
     """
     Call GPT model (3.5, 4, 4-turbo) with retry and quota check, supporting proxy settings.
+    Uses infinite retries by default to ensure the experiment completes.
 
     Args:
         question (str): The question to ask the model.
         model_version (str): The model version to use ("gpt-3.5-turbo", "gpt-4", "gpt-4-turbo").
         max_tokens (int): Maximum token length for the response.
-        retries (int): Number of retry attempts in case of request failure.
-        proxy (dict): Proxy settings as a dictionary (e.g., {"http": "http://proxyserver:port", "https": "http://proxyserver:port"}).
+        retries (int): Number of retry attempts in case of request failure. None means infinite retries.
 
     Returns:
         str: The response from the specified GPT model or an error message.
@@ -141,7 +170,11 @@ def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int 
         "temperature": 0.7
     }
 
-    for attempt in range(retries):
+    attempt = 0
+    max_wait_time = 60  # Maximum wait time between retries (seconds)
+    
+    while retries is None or attempt < retries:
+        attempt += 1
         try:
             response = requests.post(url, headers=headers, data=json.dumps(data), proxies=PROXY)
             response.raise_for_status()
@@ -154,16 +187,38 @@ def call_gpt(question: str, model_version: str = "gpt-4-turbo", max_tokens: int 
             completion_tokens = usage_info.get("completion_tokens", 0)
             total_tokens = usage_info.get("total_tokens", 0)
             print(f"Tokens used: Prompt = {prompt_tokens}, Completion = {completion_tokens}, Total = {total_tokens}")
+            
+            # Record token usage if tracker is available
+            if _token_tracker_available:
+                try:
+                    tracker = get_tracker()
+                    tracker.record_usage(
+                        model=model_version,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens
+                    )
+                except Exception as e:
+                    # Don't fail if token tracking fails
+                    pass
 
             return answer
         except requests.exceptions.RequestException as e:
-            print(f"Request failed, retry {attempt + 1}/{retries}: {e}")
-            time.sleep(2)  # Wait before retrying
+            # Calculate wait time with exponential backoff (capped at max_wait_time)
+            wait_time = min(2 ** min(attempt, 6), max_wait_time)  # Exponential backoff: 2, 4, 8, 16, 32, 60, 60, ...
+            if retries is None:
+                print(f"Request failed, retry {attempt} (infinite retries): {e}")
+                print(f"Waiting {wait_time} seconds before retry...")
+            else:
+                print(f"Request failed, retry {attempt}/{retries}: {e}")
+                print(f"Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
+    
     return "Request failed after maximum retries."
 
 
 def call_gpt_with_rag(question: str, rag_engine, model_version: str = "gpt-4-turbo", 
-                      max_tokens: int = 1500, retries: int = 3) -> str:
+                      max_tokens: int = 1500, retries: int = None) -> str:
     """
     Call GPT with RAG enhancement
     
@@ -179,22 +234,14 @@ def call_gpt_with_rag(question: str, rag_engine, model_version: str = "gpt-4-tur
     """
     # Extract seed scenario from question (simplified - in practice would parse more carefully)
     # Use RAG to retrieve relevant scenarios
-    try:
-        retrieved = rag_engine.retrieve_relevant_scenarios(question, k=rag_engine.top_k)
-        
-        # Build enhanced prompt
-        enhanced_prompt = rag_engine.generate_enhanced_prompt(question, retrieved)
-        
-        # Call GPT with enhanced prompt
-        response = call_gpt(enhanced_prompt, model_version=model_version, 
-                           max_tokens=max_tokens, retries=retries)
-        
-        return response
-    except Exception as e:
-        print(f"[RAG-GPT] Error in RAG-enhanced call: {e}")
-        # Fallback to regular GPT call
-        return call_gpt(question, model_version=model_version, 
-                       max_tokens=max_tokens, retries=retries)
+    retrieved = rag_engine.retrieve_relevant_scenarios(question, k=rag_engine.top_k)
+    
+    # Build enhanced prompt
+    enhanced_prompt = rag_engine.generate_enhanced_prompt(question, retrieved)
+    
+    # Call GPT with enhanced prompt (let any errors propagate)
+    return call_gpt(enhanced_prompt, model_version=model_version, 
+                    max_tokens=max_tokens, retries=retries)
 
 
 def extract_json(response):
@@ -292,14 +339,36 @@ def modify_json_file(json_file, mutate_info):
 def get_answer3_vehicle_info(response_json):
     if "answer3" in response_json:
         try:
-            vehicle_info = {
-                "Vehicle ID": int(response_json["answer3"]["Modified Background Vehicle for diversity"]["Vehicle ID"]),
-                "Location": ast.literal_eval(response_json["answer3"]["Modified Background Vehicle for diversity"]["Location"]),
-                "Speed": float(response_json["answer3"]["Modified Background Vehicle for diversity"]["Speed"].replace("km/h",""))/3.6
+            mutate_section = response_json["answer3"]["Modified Background Vehicle for diversity"]
+            raw_vehicle_id = str(mutate_section.get("Vehicle ID", "")).strip()
+            raw_location = mutate_section.get("Location", "")
+            raw_speed = mutate_section.get("Speed", "")
+
+            if not raw_vehicle_id or raw_vehicle_id.lower() == "none":
+                return None
+
+            vehicle_id = int(raw_vehicle_id)
+
+            try:
+                location = ast.literal_eval(raw_location)
+            except (ValueError, SyntaxError):
+                return None
+
+            speed_tokens = "".join(ch for ch in raw_speed if (ch.isdigit() or ch in ".-"))
+            if not speed_tokens:
+                return None
+            speed_ms = float(speed_tokens) / 3.6  # convert km/h -> m/s
+
+            return {
+                "Vehicle ID": vehicle_id,
+                "Location": location,
+                "Speed": speed_ms,
             }
-            return vehicle_info
         except KeyError as e:
             print(f"Missing key in answer3: {e}")
+            return None
+        except ValueError as e:
+            print(f"Invalid value in answer3: {e}")
             return None
     else:
         print("answer3 not found in response JSON.")

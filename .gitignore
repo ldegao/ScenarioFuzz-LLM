@@ -30,5 +30,38 @@ venv/
 *.pth
 *.npy
 api.json
-# Experiment outputs
+
+# Experiment outputs and results
 experiment_results/
+rag_short_output/
+rag_output/
+
+# Experiment data files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.pkl
+*.save
+*.bag
+*.rosbag
+
+# Experiment output directories
+camera/
+picture/
+rosbags/
+queue/
+time_record/
+npc/
+errors/
+metrics/
+ga_checkpoint.pkl
+
+# Keep only essential metrics files (if needed, uncomment specific files)
+# !metrics/metrics_summary.json
+# !metrics/metrics_records.jsonl
+# !token_usage.json

@@ -1,19 +1,30 @@
+import argparse
+import os
+import select
+import shutil
+import socket
 import subprocess
 import time
-import select
-import socket
+from datetime import datetime
 from types import SimpleNamespace
+import sys
+
+# Ensure project root is on sys.path so we can import project modules when running from script/
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# Common project directories (absolute paths, independent of current working directory)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+OUTPUT_DIR = os.path.join(DATA_DIR, "output")
+SEED_ARTIFACT_DIR = os.path.join(DATA_DIR, "seed-artifact")
+SAVE_BASE_DIR = os.path.join(DATA_DIR, "save")
 
 import torch
 import config
 import states
-import os
-import os
-import shutil
-from datetime import datetime
 
-current_dir = os.getcwd()
-os.chdir('..')
+# Configure CARLA PythonAPI path
 config.set_carla_api_path()
 
 try:
@@ -33,8 +44,6 @@ exec_state = states.ExecState()
 DEFAULT_SIM_PORT = 4000
 
 import fuzzer
-
-os.chdir(current_dir)
 
 
 def run_command(command, wait=True):
@@ -105,6 +114,12 @@ def init_environment(sim_port=DEFAULT_SIM_PORT):
     if not docker_exists:
         print(f"Docker container {docker_name} doesn't exist. Running run_carla()...")
         run_carla(port=sim_port)
+    else:
+        # Verify RPC port readiness; restart if necessary
+        if not wait_for_carla_server(sim_port, timeout=30, interval=2):
+            print(f"[WARNING] CARLA container {docker_name} is unresponsive on port {sim_port}, restarting...")
+            stop_carla()
+            run_carla(port=sim_port)
 
     # Remove files in fuzzerdata_dir
     for filename in os.listdir(fuzzerdata_dir):
@@ -115,14 +130,14 @@ def init_environment(sim_port=DEFAULT_SIM_PORT):
     # Call save_files functionality
     save_files()
 
-    # Remove directories
-    if os.path.exists("../data/output"):
-        shutil.rmtree("../data/output")
-        print("Removed ../data/output directory")
+    # Remove directories under the project data directory
+    if os.path.exists(OUTPUT_DIR):
+        shutil.rmtree(OUTPUT_DIR)
+        print(f"Removed {OUTPUT_DIR} directory")
 
-    if os.path.exists("../data/seed-artifact"):
-        shutil.rmtree("../data/seed-artifact")
-        print("Removed ../data/seed-artifact directory")
+    if os.path.exists(SEED_ARTIFACT_DIR):
+        shutil.rmtree(SEED_ARTIFACT_DIR)
+        print(f"Removed {SEED_ARTIFACT_DIR} directory")
 
 # Remove specific Docker containers
     containers, _ = run_command("docker ps -a --filter ancestor=carla-autoware:improved-record --format='{{.ID}}'")
@@ -163,11 +178,11 @@ def run_carla(port=DEFAULT_SIM_PORT):
 
 
 def save_files():
-    """Modified savefile.sh functionality to store all files and directories in ../data/output/."""
+    """Store all files and directories from data/output/ into a timestamped directory under data/save/."""
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    save_dir = f"../data/save/{timestamp}/"
+    save_dir = os.path.join(SAVE_BASE_DIR, timestamp)
 
-    output_dir = "../data/output/"
+    output_dir = OUTPUT_DIR
 
     # Check if output_dir exists
     if not os.path.exists(output_dir):
@@ -249,6 +264,12 @@ def run_test(sim_port, target, density, town, duration, max_failures=3):
     # Merge default arguments with custom arguments
     default_args.update(custom_args)
 
+    # Configure this run as a non-GPT baseline with metrics enabled:
+    # - Disable GPT-based evaluation/logging
+    # - Ensure multi-dimensional metrics (PC/PEC/TCD/BCM) are computed
+    default_args["disable_gpt"] = True
+    default_args["enable_rag_metrics"] = True
+
     # Convert to SimpleNamespace for compatibility with the fuzzer's main function
     args = SimpleNamespace(**default_args)
 
@@ -266,9 +287,9 @@ def run_test(sim_port, target, density, town, duration, max_failures=3):
             print(f"Total duration exceeded {duration} seconds. Exiting...")
             break
 
-        # Save the current directory and switch to the parent directory
+        # Save the current directory and switch to the project root directory
         current_dir = os.getcwd()
-        os.chdir('..')  # Switch to parent directory
+        os.chdir(PROJECT_ROOT)  # Switch to project root so fuzzer runs from a stable base path
 
         try:
             # Directly call the main function from fuzzer.py
@@ -305,12 +326,33 @@ def run_test(sim_port, target, density, town, duration, max_failures=3):
         time.sleep(1)
 
 
-if __name__ == "__main__":
-    # Example parameters for the test
-    sim_port = 4000
-    density = "0.4"
-    town = "3"
-    target = "autoware"
-    duration = 86400  # Duration in seconds
+def parse_cli_args():
+    parser = argparse.ArgumentParser(
+        description="ScenarioFuzz test runner (behavior/autoware)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("target", choices=["behavior", "autoware"],
+                        help="Target ADS to test")
+    parser.add_argument("density", type=str,
+                        help="Traffic density (string to match original scripts, e.g., '0.4')")
+    parser.add_argument("town", type=int,
+                        help="CARLA town id (e.g., 3 for Town03)")
+    parser.add_argument("duration", type=int,
+                        help="Total test duration in seconds")
+    parser.add_argument("--sim-port", type=int, default=DEFAULT_SIM_PORT,
+                        help="CARLA RPC port")
+    parser.add_argument("--max-failures", type=int, default=3,
+                        help="Abort after this many consecutive failures")
+    return parser.parse_args()
 
-    run_test(sim_port, target, density, town, duration)
+
+if __name__ == "__main__":
+    args = parse_cli_args()
+    run_test(
+        sim_port=args.sim_port,
+        target=args.target,
+        density=args.density,
+        town=str(args.town),
+        duration=args.duration,
+        max_failures=args.max_failures,
+    )

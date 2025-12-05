@@ -62,7 +62,106 @@ class NPC:
         if self.ego_loc:
             state['ego_loc'] = utils.carla_location_pickle(self.ego_loc)
         if self.spawn_point:
-            state['spawn_point'] = utils.carla_transform_pickle(self.spawn_point)
+            # Check spawn_point type - handle both Waypoint and Transform
+            try:
+                transform_to_save = None
+                spawn_point_type = 'unknown'
+                
+                # Strategy 1: Try as Transform (most common case)
+                try:
+                    if hasattr(self.spawn_point, 'location') and hasattr(self.spawn_point, 'rotation'):
+                        loc = getattr(self.spawn_point, 'location')
+                        rot = getattr(self.spawn_point, 'rotation')
+                        # Check if these are actual Location/Rotation objects
+                        if hasattr(loc, 'x') and hasattr(rot, 'pitch'):
+                            # It's a Transform object
+                            transform_to_save = self.spawn_point
+                            spawn_point_type = 'transform'
+                        else:
+                            raise AttributeError("Not a Transform")
+                    else:
+                        raise AttributeError("Not a Transform")
+                except (AttributeError, TypeError):
+                    # Strategy 2: Try as Waypoint - extract transform
+                    try:
+                        if hasattr(self.spawn_point, 'transform'):
+                            transform_attr = getattr(self.spawn_point, 'transform')
+                            
+                            # Check if transform is callable (method) or a property
+                            if callable(transform_attr):
+                                # transform is a method, call it
+                                transform_obj = transform_attr()
+                                # Verify it's a Transform object
+                                if hasattr(transform_obj, 'location') and hasattr(transform_obj, 'rotation'):
+                                    transform_to_save = transform_obj
+                                    spawn_point_type = 'waypoint'
+                                else:
+                                    raise ValueError("transform() did not return a Transform object")
+                            elif hasattr(transform_attr, 'location') and hasattr(transform_attr, 'rotation'):
+                                # transform is a property returning Transform
+                                transform_to_save = transform_attr
+                                spawn_point_type = 'waypoint'
+                            else:
+                                raise AttributeError("transform is not accessible")
+                        else:
+                            raise AttributeError("No transform attribute")
+                    except (AttributeError, TypeError, ValueError) as waypoint_err:
+                        # Strategy 3: Try to extract location/rotation from waypoint directly
+                        try:
+                            if hasattr(self.spawn_point, 'location') and hasattr(self.spawn_point, 'rotation'):
+                                waypoint_loc = getattr(self.spawn_point, 'location')
+                                waypoint_rot = getattr(self.spawn_point, 'rotation')
+                                if hasattr(waypoint_loc, 'x') and hasattr(waypoint_rot, 'pitch'):
+                                    # Create Transform from waypoint's location/rotation
+                                    transform_to_save = carla.Transform(waypoint_loc, waypoint_rot)
+                                    spawn_point_type = 'waypoint'
+                                else:
+                                    raise ValueError("Waypoint location/rotation are not valid")
+                            else:
+                                raise AttributeError("No location/rotation attributes")
+                        except (AttributeError, TypeError, ValueError) as direct_err:
+                            # All strategies failed - log detailed error but don't set to None yet
+                            print(f"[WARNING] Cannot extract transform from spawn_point. "
+                                  f"Type: {type(self.spawn_point)}, "
+                                  f"Attributes: {dir(self.spawn_point)[:10]}, "
+                                  f"Errors: Transform={waypoint_err}, Direct={direct_err}")
+                            # Try one last time: if spawn_point has any location-like attributes
+                            try:
+                                # Try to get any location information
+                                if hasattr(self.spawn_point, 'location'):
+                                    loc = getattr(self.spawn_point, 'location')
+                                    if hasattr(loc, 'x'):
+                                        # At least we have location, create a default Transform
+                                        default_rot = carla.Rotation(pitch=0, yaw=0, roll=0)
+                                        transform_to_save = carla.Transform(loc, default_rot)
+                                        spawn_point_type = 'waypoint_fallback'
+                                        print(f"[WARNING] Using fallback: extracted location only, using default rotation")
+                            except Exception as fallback_err:
+                                print(f"[ERROR] All spawn_point serialization strategies failed. "
+                                      f"Last error: {fallback_err}. Setting spawn_point to None.")
+                                transform_to_save = None
+                                spawn_point_type = 'unknown'
+                
+                # Save the transform if we successfully extracted one
+                if transform_to_save is not None:
+                    try:
+                        state['spawn_point'] = utils.carla_transform_pickle(transform_to_save)
+                        state['spawn_point_type'] = spawn_point_type
+                    except Exception as pickle_err:
+                        print(f"[ERROR] Failed to pickle transform: {pickle_err}")
+                        state['spawn_point'] = None
+                        state['spawn_point_type'] = 'unknown'
+                else:
+                    state['spawn_point'] = None
+                    state['spawn_point_type'] = 'unknown'
+                    
+            except Exception as e:
+                # If any unexpected error occurs during serialization
+                print(f"[ERROR] Unexpected error serializing spawn_point: {e}")
+                import traceback
+                traceback.print_exc()
+                state['spawn_point'] = None
+                state['spawn_point_type'] = 'unknown'
         state['instance'] = None
         state['sensor_collision'] = None
         state['sensor_lane_invasion'] = None
@@ -73,7 +172,26 @@ class NPC:
         if state.get('ego_loc'):
             self.ego_loc = utils.carla_location_unpickle(state['ego_loc'])
         if state.get('spawn_point'):
-            self.spawn_point = utils.carla_transform_unpickle(state['spawn_point'])
+            # Restore spawn_point based on saved type
+            # Note: We always save as Transform, so restore as Transform
+            # The type annotation says Waypoint, but we handle both
+            try:
+                self.spawn_point = utils.carla_transform_unpickle(state['spawn_point'])
+            except Exception as e:
+                # If unpickling fails, raise the exception instead of silently setting to None
+                # This ensures we know about serialization problems immediately
+                npc_id = state.get('npc_id', 'unknown')
+                raise RuntimeError(f"Failed to unpickle spawn_point for NPC {npc_id}: {e}. "
+                                 f"This indicates a serialization/deserialization error that needs to be fixed.")
+            # Remove spawn_point_type from state if present (it's metadata only)
+            if 'spawn_point_type' in self.__dict__:
+                del self.__dict__['spawn_point_type']
+        else:
+            # spawn_point was None in saved state
+            # This is OK if instance is set later (e.g., during scenario execution)
+            # Only log if we're sure it's a problem (which we can't know at deserialization time)
+            # Don't print warning here - spawn_point may be set later or instance may be used instead
+            self.spawn_point = None
 
     def safe_check(self, another_npc, width=1.5, adjust=2):
         """
@@ -100,6 +218,8 @@ class NPC:
 
     def get_position_now(self):
         if self.instance is None:
+            if self.spawn_point is None:
+                raise ValueError(f"NPC {self.npc_id}: spawn_point is None and instance is None, cannot get position")
             position = self.spawn_point.location
         else:
             position = self.instance.get_transform().location
@@ -107,6 +227,8 @@ class NPC:
 
     def get_speed_now(self):
         if self.instance is None:
+            if self.spawn_point is None:
+                raise ValueError(f"NPC {self.npc_id}: spawn_point is None and instance is None, cannot get speed")
             roll_degrees = self.spawn_point.rotation.roll
             roll_rad = math.radians(roll_degrees)
             speed_x = self.speed * math.cos(roll_rad)
@@ -122,6 +244,8 @@ class NPC:
 
     def get_waypoint(self, town_map):
         if self.instance is None:
+            if self.spawn_point is None:
+                raise ValueError(f"NPC {self.npc_id}: spawn_point is None and instance is None, cannot get waypoint")
             location = self.spawn_point.location
         else:
             location = self.instance.get_transform().location

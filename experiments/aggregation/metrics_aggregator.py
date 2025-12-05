@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+Metrics Aggregator
+------------------
+
+Utilities to aggregate per-scenario metrics (PC, PEC, TCD, BCM) into
+per-run summaries, and to load/save these metrics in a simple JSON/JSONL
+format.
+
+This module is intentionally decoupled from the core fuzzing loop so it
+can be used both online (during experiment_manager archiving) and
+offline (for post-hoc analysis).
+"""
+
+import json
+import os
+from typing import Dict, List
+
+
+def load_records_from_jsonl(path: str) -> List[Dict]:
+    """
+    Load per-scenario metric records from a JSONL file.
+
+    Each line is expected to be a JSON object with at least:
+      - generation_id: int
+      - scenario_id: int
+      - pc, pec, tcd, bcm: float
+
+    Args:
+        path: Path to metrics_records.jsonl
+
+    Returns:
+        List of record dictionaries. If file does not exist, returns [].
+    """
+    records: List[Dict] = []
+    if not path or not os.path.exists(path):
+        return records
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if isinstance(rec, dict):
+                        records.append(rec)
+                except json.JSONDecodeError:
+                    # Skip malformed lines but continue processing others
+                    continue
+    except Exception as e:
+        print(f"[MetricsAggregator] WARNING: Failed to load records from {path}: {e}")
+
+    return records
+
+
+def aggregate_run_metrics(records: List[Dict]) -> Dict[str, float]:
+    """
+    Aggregate a list of per-scenario metric records into a per-run summary.
+
+    Currently uses simple arithmetic mean over all scenarios for each metric.
+
+    Args:
+        records: List of metric records, each containing pc/pec/tcd/bcm keys.
+
+    Returns:
+        Summary dictionary with fields:
+          - num_records
+          - pc, pec, tcd, bcm
+    """
+    summary: Dict[str, float] = {
+        "num_records": 0,
+        "pc": 0.0,
+        "pec": 0.0,
+        "tcd": 0.0,
+        "bcm": 0.0,
+    }
+
+    if not records:
+        return summary
+
+    keys = ["pc", "pec", "tcd", "bcm"]
+    n = float(len(records))
+
+    for k in keys:
+        total = 0.0
+        for r in records:
+            try:
+                v = float(r.get(k, 0.0))
+            except (TypeError, ValueError):
+                v = 0.0
+            total += v
+        summary[k] = total / n
+
+    summary["num_records"] = int(n)
+    return summary
+
+
+def save_run_summary(
+    summary: Dict,
+    path: str,
+    method_name: str = None,
+    experiment_id: str = None,
+    num_scenarios: int = None,
+) -> str:
+    """
+    Save a per-run metrics summary to JSON.
+
+    Args:
+        summary: Base summary dict from aggregate_run_metrics()
+        path: Destination JSON path
+        method_name: Optional method name (ScenarioFuzz-LLM, RAG-ScenarioFuzz, etc.)
+        experiment_id: Optional experiment identifier
+        num_scenarios: Optional number of scenarios evaluated in this run
+
+    Returns:
+        The path to the written summary file.
+    """
+    data = dict(summary) if summary is not None else {}
+
+    if method_name is not None:
+        data["method"] = method_name
+    if experiment_id is not None:
+        data["experiment_id"] = experiment_id
+    if num_scenarios is not None:
+        data["num_scenarios"] = num_scenarios
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"[MetricsAggregator] Saved run summary to {path}")
+    except Exception as e:
+        print(f"[MetricsAggregator] WARNING: Failed to save run summary to {path}: {e}")
+
+    return path
+
+
+def main():
+    """
+    Simple CLI for manual aggregation:
+
+    python -m experiments.aggregation.metrics_aggregator \\
+        --records path/to/metrics_records.jsonl \\
+        --output  path/to/metrics_summary.json \\
+        --method  RAG-ScenarioFuzz \\
+        --experiment-id Exp01
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Aggregate per-scenario metrics into a run summary.")
+    parser.add_argument("--records", required=True, help="Path to metrics_records.jsonl")
+    parser.add_argument("--output", required=True, help="Path to output metrics_summary.json")
+    parser.add_argument("--method", type=str, default=None, help="Method name (optional)")
+    parser.add_argument("--experiment-id", type=str, default=None, help="Experiment ID (optional)")
+    parser.add_argument("--num-scenarios", type=int, default=None, help="Number of scenarios (optional)")
+
+    args = parser.parse_args()
+
+    records = load_records_from_jsonl(args.records)
+    summary = aggregate_run_metrics(records)
+    save_run_summary(
+        summary,
+        args.output,
+        method_name=args.method,
+        experiment_id=args.experiment_id,
+        num_scenarios=args.num_scenarios,
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+

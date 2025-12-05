@@ -665,7 +665,7 @@ def evaluation(ind: Scenario):
             ret = 1
             # Set default fitness values so the individual can still be evaluated
             if not ind.fitness.valid:
-                ind.fitness.values = (0.0, 0.0)  # Default fitness: (min_dist, nova)
+                ind.fitness.values = (0.0, 0.0, 0.0)  # Default fitness: (min_dist, nova, similarity)
             # Don't re-raise for non-fatal errors - let the fuzzer continue
 
     if ret is None:
@@ -675,7 +675,7 @@ def evaluation(ind: Scenario):
         # Instead of raising, set default fitness and continue
         # This allows the fuzzer to keep running even if one scenario has a fatal error
         if not ind.fitness.valid:
-            ind.fitness.values = (0.0, 0.0)  # Default fitness: (min_dist, nova)
+            ind.fitness.values = (0.0, 0.0, 0.0)  # Default fitness: (min_dist, nova, similarity)
         # Only raise if this is a critical system error that requires restart
         # For now, we'll continue to allow maximum scenario generation
         # raise RuntimeError("Fatal error occurred during test (ret == -1)")
@@ -755,6 +755,22 @@ def evaluation(ind: Scenario):
 
 def mut_npc_list(ind: Scenario):
     global town_map
+    # Validate town_map type before use
+    if town_map is None:
+        raise RuntimeError("town_map is None. Ensure init_env() has been called before mutation.")
+    if isinstance(town_map, str):
+        raise RuntimeError(
+            f"town_map is a string ('{town_map}'), not a Map object. "
+            f"This indicates a serialization/deserialization issue. "
+            f"Ensure _ensure_town_map_valid() is called after init_env()."
+        )
+    if not hasattr(town_map, 'get_waypoint'):
+        raise RuntimeError(
+            f"town_map does not have get_waypoint method. "
+            f"Type: {type(town_map)}, Value: {town_map}. "
+            f"This indicates town_map is not a valid CARLA Map object."
+        )
+    
     if len(ind.npc_list) <= 1:
         return ind.npc_list
     if bottleneck:
@@ -763,7 +779,8 @@ def mut_npc_list(ind: Scenario):
             for npc in ind.npc_list:
                 if npc.instance_id == ind.mutate_info["Vehicle ID"]:
                     npc.speed = ind.mutate_info["Speed"]
-                    if town_map is not None and "Location" in ind.mutate_info:
+                    # town_map is already validated at function start, safe to use
+                    if "Location" in ind.mutate_info:
                         location = carla.Location(x=ind.mutate_info["Location"][0], y=ind.mutate_info["Location"][1],
                                                   z=0.5)
                         waypoint = town_map.get_waypoint(location, project_to_road=True,
@@ -911,8 +928,18 @@ def seed_initialize(town, town_map):
             destination_flag = False
         if math.sqrt((sp_x - wp_x) ** 2 + (sp_y - wp_y) ** 2) > c.MAX_DIST:
             destination_flag = True
+    # Ensure town_map is a string, not a CARLA Map object, for serialization
+    # If town_map is a Map object, convert to string representation
+    map_value = town_map
+    if hasattr(town_map, 'get_waypoint'):
+        # It's a CARLA Map object, we can't serialize it
+        # Use None instead - it will be restored from exec_state.world.get_map() later
+        map_value = None
+    elif not isinstance(town_map, str):
+        # Unknown type, set to None for safety
+        map_value = None
     seed_dict = {
-        "map": town_map,
+        "map": map_value,
         "sp_x": sp_x,
         "sp_y": sp_y,
         "sp_z": sp_z,
@@ -989,6 +1016,8 @@ def init_env(args):
             if (lane[0], lane[1] - 1) in lane_list:
                 G.add_edge(lane, (lane[0], lane[1] - 1))
     utils.switch_map(conf, town_map, client)
+    # Return town_map as string (not Map object) to avoid serialization issues
+    # The Map object (town) is returned separately
     return conf, town, town_map, client, world, G
 
 
@@ -999,6 +1028,69 @@ def print_all_attr(obj):
             attr_value = getattr(obj, attr_name)
             attr_type = type(attr_value)
             print(f"Attribute: {attr_name}, Value: {attr_value}, Type: {attr_type}")
+
+
+def _ensure_town_map_valid(town):
+    """
+    Ensure town_map global variable is a Map object, not a string.
+    This is critical for mutation functions that need get_waypoint().
+    
+    Args:
+        town: CARLA Map object from init_env()
+    
+    Returns:
+        Valid town_map (Map object)
+    
+    Raises:
+        RuntimeError: If town is None or town_map cannot be set
+    """
+    global town_map
+    if town is None:
+        raise RuntimeError("town is None, cannot set town_map. Ensure init_env() has been called successfully.")
+    
+    if town_map is None or isinstance(town_map, str):
+        old_type = type(town_map).__name__ if town_map is not None else "None"
+        town_map = town
+        print(f"[INFO] Set town_map to Map object (was: {old_type})")
+    elif not hasattr(town_map, 'get_waypoint'):
+        # town_map exists but doesn't have get_waypoint method
+        print(f"[WARNING] town_map exists but doesn't have get_waypoint method. Resetting to town.")
+        town_map = town
+    
+    return town_map
+
+
+def _validate_global_state():
+    """
+    Validate that global variables and exec_state are correctly initialized.
+    This should be called after init_env() and before restoring checkpoint.
+    
+    Raises:
+        RuntimeError: If validation fails
+    """
+    errors = []
+    
+    # Check town_map
+    global town_map
+    if town_map is None:
+        errors.append("town_map is None")
+    elif isinstance(town_map, str):
+        errors.append(f"town_map is a string ('{town_map}'), not a Map object")
+    elif not hasattr(town_map, 'get_waypoint'):
+        errors.append("town_map does not have get_waypoint method (not a valid Map object)")
+    
+    # Check exec_state
+    if exec_state.world is None:
+        errors.append("exec_state.world is None")
+    if exec_state.client is None:
+        errors.append("exec_state.client is None")
+    
+    if errors:
+        error_msg = "Global state validation failed: " + ", ".join(errors)
+        error_msg += "\nThis usually indicates that init_env() was not called or failed."
+        raise RuntimeError(error_msg)
+    
+    print("[INFO] Global state validation passed")
 
 
 def check_nondominated_stability(pareto_front, archive, generations=10, epsilon=1e-6):
@@ -1152,6 +1244,38 @@ def _save_checkpoint(checkpoint_path, curr_gen, total_scenarios_generated, popul
         # Extract hof items - ParetoFront is just a container, we only need the Scenario objects
         hof_items = list(hof.items) if hasattr(hof, 'items') and hof.items else []
         
+        # Pre-validate serializability of objects before building checkpoint
+        # This helps identify which object causes serialization failure
+        validation_errors = []
+        try:
+            import io
+            test_buffer = io.BytesIO()
+            # Test serialization of population
+            for i, ind in enumerate(population):
+                try:
+                    pickle.dump(ind, test_buffer)
+                except Exception as pop_err:
+                    validation_errors.append(f"Population[{i}] serialization failed: {pop_err}")
+            # Test serialization of archive
+            for i, ind in enumerate(archive):
+                try:
+                    pickle.dump(ind, test_buffer)
+                except Exception as arch_err:
+                    validation_errors.append(f"Archive[{i}] serialization failed: {arch_err}")
+            # Test serialization of hof_items
+            for i, ind in enumerate(hof_items):
+                try:
+                    pickle.dump(ind, test_buffer)
+                except Exception as hof_err:
+                    validation_errors.append(f"HofItems[{i}] serialization failed: {hof_err}")
+        except Exception as test_err:
+            print(f"[WARNING] Pre-save serialization test failed: {test_err}")
+            if validation_errors:
+                print(f"[WARNING] Individual object serialization errors:")
+                for err in validation_errors:
+                    print(f"  - {err}")
+            # Continue with save attempt - might still work for some objects
+        
         # Build checkpoint data with only serializable, essential data
         checkpoint_data = {
             'curr_gen': curr_gen,
@@ -1172,6 +1296,8 @@ def _save_checkpoint(checkpoint_path, curr_gen, total_scenarios_generated, popul
             pickle.dump(checkpoint_data, f)
         print(f"[INFO] Checkpoint saved: gen={curr_gen}, scenarios={total_scenarios_generated}, next_id={next_scenario_id}, "
               f"population_size={len(population)}, archive_size={len(archive)}, hof_size={len(hof_items)}")
+        if validation_errors:
+            print(f"[WARNING] Some objects had serialization warnings (checkpoint saved anyway): {len(validation_errors)} warnings")
             
     except Exception as e:
         print(f"[WARNING] Failed to save checkpoint: {e}")
@@ -1200,6 +1326,18 @@ def _load_checkpoint(checkpoint_path):
         if not all(key in checkpoint_data for key in required_keys):
             print(f"[WARNING] Checkpoint file missing required keys. Found: {list(checkpoint_data.keys())}")
             return None
+        
+        # Validate data types and provide defaults for missing optional keys
+        if not isinstance(checkpoint_data.get('curr_gen'), (int, type(None))):
+            print(f"[WARNING] Invalid curr_gen type: {type(checkpoint_data.get('curr_gen'))}, using default 0")
+            checkpoint_data['curr_gen'] = 0
+        if not isinstance(checkpoint_data.get('total_scenarios_generated'), (int, type(None))):
+            print(f"[WARNING] Invalid total_scenarios_generated type: {type(checkpoint_data.get('total_scenarios_generated'))}, using default 0")
+            checkpoint_data['total_scenarios_generated'] = 0
+        if not isinstance(checkpoint_data.get('next_scenario_id'), (int, type(None))):
+            print(f"[WARNING] Invalid next_scenario_id type: {type(checkpoint_data.get('next_scenario_id'))}, using default 1")
+            checkpoint_data['next_scenario_id'] = 1
+        
         print(f"[INFO] Checkpoint loaded: gen={checkpoint_data.get('curr_gen', 0)}, "
               f"scenarios={checkpoint_data.get('total_scenarios_generated', 0)}, "
               f"next_id={checkpoint_data.get('next_scenario_id', 1)}")
@@ -1226,7 +1364,21 @@ def main(args=None):
     copyreg.pickle(carla.libcarla.Transform, utils.carla_transform_pickle, utils.carla_transform_unpickle)
     # copyreg.pickle(carla.libcarla.ActorBlueprint, carla_ActorBlueprint_pickle, carla_ActorBlueprint_unpickle)
 
-    conf, town, town_map, exec_state.client, exec_state.world, exec_state.G = init_env(args)
+    try:
+        conf, town, town_map_str, exec_state.client, exec_state.world, exec_state.G = init_env(args)
+    except RuntimeError as e:
+        # Re-raise RuntimeError from init_env (e.g., CARLA connection timeout)
+        # This will be caught by experiment_manager's retry logic
+        raise
+    
+    # Set global town_map to the actual CARLA map object (town), not the string
+    # The string town_map_str is only used for loading the world
+    # This is critical for mutation functions that need get_waypoint()
+    _ensure_town_map_valid(town)
+    
+    # Store town_map_str in conf for use in seed_initialize (to avoid serialization issues)
+    conf.town_map_str = town_map_str
+    
     # Load persistent Scenario_database if configured
     global Scenario_database
     global total_scenarios_generated
@@ -1241,6 +1393,17 @@ def main(args=None):
     # Store checkpoint path in global state for evaluation function
     global _ga_state
     _ga_state['checkpoint_path'] = checkpoint_path
+    
+    # Validate that init_env() has been called and exec_state is initialized
+    # This ensures the correct restoration order: init_env() -> set globals -> restore checkpoint
+    try:
+        _validate_global_state()
+    except RuntimeError as validation_error:
+        raise RuntimeError(
+            f"Cannot restore checkpoint: global state not properly initialized. "
+            f"This indicates init_env() was not called or failed. "
+            f"Original error: {validation_error}"
+        )
     
     # Try to load checkpoint or infer state from existing files
     checkpoint_data = _load_checkpoint(checkpoint_path)
@@ -1283,13 +1446,50 @@ def main(args=None):
         stats = None
         logbook = None
         
-        # Restore conf reference in Scenario objects if needed
+        # Restore conf reference in Scenario objects
         # conf is stored globally and will be available when main() runs
-        # But we need to ensure Scenario objects can access it
-        # This will be handled when conf is set globally in main()
+        # But we need to ensure Scenario objects can access it immediately
+        # Restore conf in all Scenario objects from checkpoint
+        conf_restored_count = 0
+        conf_failed_count = 0
+        for scenario in population + archive + hof_items:
+            if hasattr(scenario, 'conf') and scenario.conf is None:
+                scenario.conf = conf
+                if scenario.conf is not None:
+                    conf_restored_count += 1
+                else:
+                    conf_failed_count += 1
+                    scenario_id = getattr(scenario, 'scenario_id', 'unknown')
+                    print(f"[WARNING] Failed to restore conf for scenario {scenario_id}")
+        
+        if conf_restored_count > 0:
+            print(f"[INFO] Restored conf in {conf_restored_count} Scenario objects from checkpoint")
+        if conf_failed_count > 0:
+            print(f"[WARNING] Failed to restore conf in {conf_failed_count} Scenario objects")
+        
+        # Validate restored state
+        if not isinstance(population, list):
+            print(f"[WARNING] Invalid population type in checkpoint, reinitializing...")
+            population = []
+        if not isinstance(archive, list):
+            print(f"[WARNING] Invalid archive type in checkpoint, reinitializing...")
+            archive = []
+        if hof is None or not isinstance(hof, tools.ParetoFront):
+            print(f"[WARNING] Invalid hof in checkpoint, reinitializing...")
+            hof = tools.ParetoFront()
+            if hof_items:
+                hof.update(hof_items)
         
         # Reset bottleneck flag when restoring from checkpoint
         bottleneck = False
+        
+        # Validate global state again after restoring checkpoint
+        try:
+            _validate_global_state()
+        except RuntimeError as post_restore_error:
+            print(f"[WARNING] Global state validation failed after checkpoint restore: {post_restore_error}")
+            print("[WARNING] Attempting to fix town_map...")
+            _ensure_town_map_valid(town)
         
         # Verify and sync scenario count from file system (single source of truth)
         file_scenario_count = _count_scenarios_from_files(queue_dir)
@@ -1310,14 +1510,45 @@ def main(args=None):
         _ga_state['stats'] = stats
         # Validate restored state
         if not isinstance(population, list):
-            print(f"[WARNING] Invalid population type in checkpoint, reinitializing...")
+            print(f"[WARNING] Invalid population type in checkpoint: {type(population)}, reinitializing...")
             population = []
         if not isinstance(archive, list):
-            print(f"[WARNING] Invalid archive type in checkpoint, reinitializing...")
+            print(f"[WARNING] Invalid archive type in checkpoint: {type(archive)}, reinitializing...")
             archive = []
         if hof is None or not isinstance(hof, tools.ParetoFront):
-            print(f"[WARNING] Invalid hof in checkpoint, reinitializing...")
+            print(f"[WARNING] Invalid hof in checkpoint: {type(hof)}, reinitializing...")
             hof = tools.ParetoFront()
+        
+        # Validate each Scenario object in population and archive
+        # Remove any invalid objects to prevent runtime errors
+        for scenario_list_name, scenario_list in [('population', population), ('archive', archive)]:
+            invalid_indices = []
+            for i, ind in enumerate(scenario_list):
+                if not hasattr(ind, 'scenario_id'):
+                    print(f"[WARNING] Scenario object in {scenario_list_name}[{i}] missing scenario_id, will be removed")
+                    invalid_indices.append(i)
+                elif not hasattr(ind, 'fitness'):
+                    print(f"[WARNING] Scenario object in {scenario_list_name}[{i}] missing fitness, will be removed")
+                    invalid_indices.append(i)
+                elif not hasattr(ind, 'seed_data'):
+                    print(f"[WARNING] Scenario object in {scenario_list_name}[{i}] missing seed_data, will be removed")
+                    invalid_indices.append(i)
+            # Remove invalid objects in reverse order to maintain indices
+            for i in reversed(invalid_indices):
+                scenario_list.pop(i)
+        
+        # Validate hof items
+        if hof and hasattr(hof, 'items'):
+            invalid_hof_items = []
+            for i, ind in enumerate(hof.items):
+                if not hasattr(ind, 'scenario_id'):
+                    print(f"[WARNING] Hof item[{i}] missing scenario_id, will be removed")
+                    invalid_hof_items.append(ind)
+            for invalid_item in invalid_hof_items:
+                try:
+                    hof.items.remove(invalid_item)
+                except (ValueError, AttributeError):
+                    pass
         
         print(f"[INFO] Restored from checkpoint: gen={curr_gen}, scenarios={total_scenarios_generated}, next_id={next_scenario_id}, "
               f"population_size={len(population)}, archive_size={len(archive)}, hof_size={len(hof)}")
@@ -1362,6 +1593,9 @@ def main(args=None):
         _ga_state['next_scenario_id'] = next_scenario_id
         _ga_state['logbook'] = None
         _ga_state['stats'] = None
+        
+        # Ensure all Scenario objects have conf set (for file system recovery case)
+        # Note: population, archive, hof are empty here, but we'll set conf when they're populated later
     
     # Initialize experiment timing if not already set
     if not hasattr(conf, 'experiment_start_time') or conf.experiment_start_time is None:
@@ -1369,22 +1603,53 @@ def main(args=None):
     # Make conf globally accessible for evaluation function
     globals()['conf'] = conf
     
-    # Restore conf reference in Scenario objects from checkpoint if needed
-    # This ensures Scenario objects can access conf even after checkpoint restore
+    # Restore conf in ALL Scenario objects (both from checkpoint and from file system recovery)
+    # This ensures conf is available even if __setstate__() was called before globals()['conf'] was set
+    conf_restored_count = 0
+    conf_failed_count = 0
+    all_scenarios = []
     if checkpoint_data:
-        # Restore conf in all Scenario objects in population, archive, and hof
-        for scenario_list in [population, archive]:
-            for ind in scenario_list:
-                if hasattr(ind, 'conf'):
-                    ind.conf = conf  # Update conf reference to current conf object
-        # Restore conf in hof items
+        # From checkpoint: population, archive, hof
+        all_scenarios.extend(population)
+        all_scenarios.extend(archive)
         if hof and hasattr(hof, 'items'):
-            for ind in hof.items:
-                if hasattr(ind, 'conf'):
-                    ind.conf = conf  # Update conf reference to current conf object
+            all_scenarios.extend(hof.items)
+    else:
+        # From file system recovery: check if there are any Scenario objects in population/archive/hof
+        # (These would be from previous runs that weren't properly cleaned)
+        all_scenarios.extend(population)
+        all_scenarios.extend(archive)
+        if hof and hasattr(hof, 'items'):
+            all_scenarios.extend(hof.items)
+    
+    for scenario in all_scenarios:
+        if hasattr(scenario, 'conf') and (scenario.conf is None or not hasattr(scenario.conf, 'queue_dir')):
+            scenario.conf = conf
+            if scenario.conf is not None and hasattr(scenario.conf, 'queue_dir'):
+                conf_restored_count += 1
+            else:
+                conf_failed_count += 1
+                scenario_id = getattr(scenario, 'scenario_id', 'unknown')
+                print(f"[WARNING] Failed to restore conf for scenario {scenario_id}")
+    
+    if conf_restored_count > 0:
+        print(f"[INFO] Restored conf in {conf_restored_count} Scenario objects after init_env()")
+    if conf_failed_count > 0:
+        print(f"[WARNING] Failed to restore conf in {conf_failed_count} Scenario objects")
     
     world = exec_state.world
     blueprint_library = world.get_blueprint_library()
+    # Ensure town_map global is set to the map object (not string)
+    # This is critical for mutation functions that need get_waypoint()
+    # town_map should be the CARLA map object, not the string name
+    _ensure_town_map_valid(town)
+    
+    # Final validation of global state
+    try:
+        _validate_global_state()
+    except RuntimeError as final_validation_error:
+        print(f"[ERROR] Final global state validation failed: {final_validation_error}")
+        raise
     # if conf.agent_type == c.AUTOWARE:
     #     autoware_launch(exec_state.world, conf, town)
     
@@ -1428,16 +1693,16 @@ def main(args=None):
                 # Other runtime errors - use default fitness and continue
                 print(f"[WARNING] Error in scenario {ind.scenario_id}: {e}. Using default fitness and continuing.")
                 if not ind.fitness.valid:
-                    ind.fitness.values = (0.0, 0.0)  # Default fitness: (min_dist, nova)
-                return (0.0, 0.0)
+                    ind.fitness.values = (0.0, 0.0, 0.0)  # Default fitness: (min_dist, nova, similarity)
+                return (0.0, 0.0, 0.0)
         except Exception as e:
             # Catch any other unexpected exceptions and continue
             print(f"[WARNING] Unexpected error in scenario {ind.scenario_id}: {e}. Using default fitness and continuing.")
             import traceback
             traceback.print_exc()
             if not ind.fitness.valid:
-                ind.fitness.values = (0.0, 0.0)  # Default fitness: (min_dist, nova)
-            return (0.0, 0.0)
+                ind.fitness.values = (0.0, 0.0, 0.0)  # Default fitness: (min_dist, nova, similarity)
+            return (0.0, 0.0, 0.0)
     
     toolbox.register("evaluate", safe_evaluation)
     toolbox.register("mate", cx_scenario)
@@ -1448,7 +1713,11 @@ def main(args=None):
     if not population or len(population) == 0:
         print(f' ====== Initializing Population ====== ')
         for i in range(POP_SIZE):
-            seed_dict = seed_initialize(town, town_map)
+            # Pass town_map_str (string) to seed_initialize, not town_map (Map object)
+            # This ensures seed_data["map"] is serializable
+            # Get the string version from conf (set after init_env)
+            town_map_str_for_seed = getattr(conf, 'town_map_str', "Town01")
+            seed_dict = seed_initialize(town, town_map_str_for_seed)
             # Creates and initializes a Scenario instance based on the metadata
             with concurrent.futures.ThreadPoolExecutor() as my_simulate:
                 future = my_simulate.submit(create_test_scenario, conf, seed_dict)
@@ -1500,6 +1769,9 @@ def main(args=None):
             # Always sync from file system before checking limit
             file_count = _count_scenarios_from_files(queue_dir)
             total_scenarios_generated = file_count
+            # Only break if we've reached or exceeded the limit
+            # Note: max_scenarios is set by experiment_manager to the actual target (e.g., 100)
+            # So we should stop when we reach that target
             if total_scenarios_generated >= conf.max_scenarios:
                 print(f"Reached scenario limit: {total_scenarios_generated}/{conf.max_scenarios}")
                 break

@@ -85,11 +85,8 @@ def get_carla_transform(loc_rot_tuples):
 
 
 def get_valid_xy_range(town):
-    try:
-        with open(os.path.join("town_info", town + ".json")) as fp:
-            town_data = json.load(fp)
-    except:
-        return -999, 999, -999, 999
+    with open(os.path.join("town_info", town + ".json")) as fp:
+        town_data = json.load(fp)
 
     x_list = []
     y_list = []
@@ -170,9 +167,10 @@ def connect(conf):
     client.set_timeout(10.0)
     try:
         client.get_server_version()
-    except Exception:
+    except Exception as e:
         print("[-] Error: Check client connection.")
-        sys.exit(-1)
+        # Raise exception instead of exiting, so caller can handle retry logic
+        raise RuntimeError(f"Failed to connect to CARLA at {conf.sim_host}:{conf.sim_port}: {e}")
     if conf.debug:
         print("[debug] Connected to:", client)
 
@@ -271,7 +269,21 @@ def normalize_vector(vector):
         return carla.Vector3D(0.0, 0.0, 0.0)
 
 
-def draw_arrow(world, start, end, color=carla.Color(255, 0, 0), arrow_size=0.2):
+def draw_arrow(world, start, end, color=None, arrow_size=0.2):
+    """
+    Draw a simple arrow in the CARLA world for debugging.
+
+    Fail-fast: if carla.Color is not available and no color is provided,
+    raise an error instead of silently degrading.
+    """
+    if color is None:
+        if not hasattr(carla, "Color"):
+            raise AttributeError(
+                "carla.Color is not available. "
+                "Please check that the correct CARLA PythonAPI egg is installed."
+            )
+        color = carla.Color(255, 0, 0)
+
     direction = end - start
     direction = normalize_vector(direction)
     perpendicular = carla.Vector3D(-direction.y, direction.x, 0.0)
@@ -588,8 +600,24 @@ def carla_location_pickle(location):
 
 
 def carla_location_unpickle(json_string):
+    """
+    Unpickle a carla.Location from JSON string.
+    Handles both old format (list) and new format (dict).
+    Raises exception on failure - no fallback to avoid hiding errors.
+    """
     data = json.loads(json_string)
-    x, y, z = data
+    # Handle new format: {'location_x': x, 'location_y': y, 'location_z': z}
+    if isinstance(data, dict):
+        x = float(data.get('location_x', 0.0))
+        y = float(data.get('location_y', 0.0))
+        z = float(data.get('location_z', 0.0))
+    # Handle old format: [x, y, z] or (x, y, z)
+    elif isinstance(data, (list, tuple)) and len(data) >= 3:
+        x = float(data[0])
+        y = float(data[1])
+        z = float(data[2])
+    else:
+        raise ValueError(f"Unexpected data format for Location: {type(data)}, value: {data}. Expected dict with 'location_x', 'location_y', 'location_z' or list/tuple with 3 elements.")
     return carla.Location(x, y, z)
 
 
@@ -625,11 +653,29 @@ def carla_transform_pickle(transform):
 
 
 def carla_transform_unpickle(json_string):
-    data = json.loads(json_string)
-    x = data['location_x']
-    y = data['location_y']
-    z = data['location_z']
-    pitch = data['rotation_pitch']
-    yaw = data['rotation_yaw']
-    roll = data['rotation_roll']
+    """
+    Unpickle a carla.Transform from JSON string.
+    Raises exception on failure - no fallback to avoid hiding errors.
+    """
+    try:
+        data = json.loads(json_string)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON string for Transform: {e}. JSON string: {json_string[:100]}")
+    
+    # Validate required fields
+    required_fields = ['location_x', 'location_y', 'location_z', 'rotation_pitch', 'rotation_yaw', 'rotation_roll']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise ValueError(f"Missing required fields in Transform data: {missing_fields}. Available fields: {list(data.keys())}")
+    
+    try:
+        x = float(data['location_x'])
+        y = float(data['location_y'])
+        z = float(data['location_z'])
+        pitch = float(data['rotation_pitch'])
+        yaw = float(data['rotation_yaw'])
+        roll = float(data['rotation_roll'])
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Failed to convert Transform coordinates to float: {e}. Data: {data}")
+    
     return carla.Transform(carla.Location(x, y, z), carla.Rotation(pitch, yaw, roll))

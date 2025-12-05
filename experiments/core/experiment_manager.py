@@ -207,8 +207,19 @@ class ExperimentManager:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
             # Archive all artifacts for this run (results + metadata) for reproducibility
+            # Only archive if experiment completed successfully (not interrupted)
+            # Check if experiment was interrupted by checking if we reached the target
             try:
-                self._archive_experiment_run(method_name, experiment_id, method_dir)
+                if method_dir.exists():
+                    actual_count = self._count_scenarios(method_dir)
+                    # Only archive if we generated at least some scenarios (experiment ran)
+                    # This prevents archiving on early failures
+                    if actual_count > 0:
+                        self._archive_experiment_run(method_name, experiment_id, method_dir)
+                    else:
+                        print(f"[INFO] Skipping archive: no scenarios generated for {experiment_id}")
+                else:
+                    print(f"[INFO] Skipping archive: experiment directory does not exist for {experiment_id}")
             except Exception as archive_error:
                 print(f"[WARNING] Failed to archive experiment run {experiment_id}: {archive_error}")
     
@@ -369,8 +380,16 @@ class ExperimentManager:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
             # Archive artifacts for timed run as well
+            # Only archive if experiment completed successfully
             try:
-                self._archive_experiment_run(method_name, experiment_id, method_dir)
+                if method_dir.exists():
+                    actual_count = self._count_scenarios(method_dir)
+                    if actual_count > 0:
+                        self._archive_experiment_run(method_name, experiment_id, method_dir)
+                    else:
+                        print(f"[INFO] Skipping archive: no scenarios generated for {experiment_id}")
+                else:
+                    print(f"[INFO] Skipping archive: experiment directory does not exist for {experiment_id}")
             except Exception as archive_error:
                 print(f"[WARNING] Failed to archive timed experiment run {experiment_id}: {archive_error}")
     
@@ -473,17 +492,19 @@ class ExperimentManager:
             
             # Update max_scenarios in args to reflect remaining scenarios needed
             # This ensures fuzzer knows how many more to generate
-            # Note: We set it to a large number to let fuzzer continue, but we'll check after
-            # Actually, we should set it to remaining + some buffer to ensure we get enough
-            # But fuzzer will stop when it reaches max_scenarios, so we need to be careful
-            # Let's set it to remaining_scenarios + 10 as a buffer, but check after each run
+            # IMPORTANT: max_scenarios is controlled by the --num-scenarios parameter (passed as num_scenarios)
+            # We set args.max_scenarios to the actual target so fuzzer continues until that target is reached
+            # The fuzzer will check file count and stop when it reaches max_scenarios
             if hasattr(args, 'max_scenarios'):
-                # Temporarily set to remaining + buffer
                 original_max = args.max_scenarios
-                args.max_scenarios = remaining_scenarios + 10  # Small buffer
+                # Set to actual target (e.g., 100 from --num-scenarios 100)
+                # This ensures fuzzer continues until the real target is reached
+                args.max_scenarios = max_scenarios  # Use the actual target from --num-scenarios parameter
+                print(f"[INFO] Set args.max_scenarios to {max_scenarios} (target from --num-scenarios parameter)")
             else:
                 original_max = None
-                args.max_scenarios = remaining_scenarios + 10
+                args.max_scenarios = max_scenarios  # Use the actual target from --num-scenarios parameter
+                print(f"[INFO] Set args.max_scenarios to {max_scenarios} (target from --num-scenarios parameter)")
             
             try:
                 # Ensure CARLA is running
@@ -539,6 +560,44 @@ class ExperimentManager:
                 try:
                     fuzzer.main(args)
                     print(f"[INFO] fuzzer.main() completed successfully")
+                except RuntimeError as runtime_err:
+                    # Check if this is a CARLA connection/timeout error
+                    msg = str(runtime_err)
+                    if "time-out" in msg or "simulator" in msg.lower() or "connection" in msg.lower():
+                        print(f"[WARNING] CARLA connection/timeout error in fuzzer.main(): {runtime_err}")
+                        # Count scenarios to see if we made any progress
+                        if output_dir:
+                            completed_after_error = self._count_scenarios(output_dir)
+                            print(f"[INFO] Scenarios after fuzzer error: {completed_after_error}/{max_scenarios}")
+                            if completed_after_error > existing_scenarios:
+                                print(f"[INFO] Made progress: {completed_after_error - existing_scenarios} new scenarios")
+                                # Made progress, but still need to handle the error
+                                # Re-raise to trigger retry logic
+                                raise
+                            else:
+                                print(f"[WARNING] No progress made, treating as connection/environment issue")
+                                raise
+                        else:
+                            # No output dir, re-raise to trigger retry
+                            raise
+                    else:
+                        # Other RuntimeError (e.g., AttributeError from mutation)
+                        print(f"[WARNING] fuzzer.main() raised RuntimeError: {runtime_err}")
+                        import traceback
+                        traceback.print_exc()
+                        # Count scenarios to see if we made any progress
+                        if output_dir:
+                            completed_after_error = self._count_scenarios(output_dir)
+                            print(f"[INFO] Scenarios after fuzzer error: {completed_after_error}/{max_scenarios}")
+                            if completed_after_error > existing_scenarios:
+                                print(f"[INFO] Made progress: {completed_after_error - existing_scenarios} new scenarios")
+                                # Made progress, but error occurred - re-raise to trigger retry
+                                raise
+                            else:
+                                print(f"[WARNING] No progress made, treating as error")
+                                raise
+                        else:
+                            raise
                 except Exception as fuzzer_error:
                     # If fuzzer fails, check if we've made progress
                     print(f"[WARNING] fuzzer.main() raised exception: {fuzzer_error}")
@@ -552,11 +611,14 @@ class ExperimentManager:
                         if completed_after_error > existing_scenarios:
                             # Made some progress, continue to check completion
                             print(f"[INFO] Made progress: {completed_after_error - existing_scenarios} new scenarios")
-                            pass
+                            # Still re-raise to trigger retry logic
+                            raise
                         else:
                             # No progress, treat as connection/environment issue
                             print(f"[WARNING] No progress made, treating as connection/environment issue")
                             raise
+                    else:
+                        raise
                 
                 # Check if we've reached the target number of scenarios
                 # Count scenarios from output directory (more reliable than global variable)
@@ -820,8 +882,16 @@ class ExperimentManager:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
             # Archive all artifacts for this run
+            # Only archive if experiment completed successfully
             try:
-                self._archive_experiment_run(method_name, experiment_id, method_dir)
+                if method_dir.exists():
+                    actual_count = self._count_scenarios(method_dir)
+                    if actual_count > 0:
+                        self._archive_experiment_run(method_name, experiment_id, method_dir)
+                    else:
+                        print(f"[INFO] Skipping archive: no scenarios generated for {experiment_id}")
+                else:
+                    print(f"[INFO] Skipping archive: experiment directory does not exist for {experiment_id}")
             except Exception as archive_error:
                 print(f"[WARNING] Failed to archive experiment run {experiment_id}: {archive_error}")
     
@@ -834,11 +904,20 @@ class ExperimentManager:
         - Global scenario database (if any)
         - GPT conversation logs
         - Progress checkpoint and time history
+        
+        Note: Uses experiment_id as directory name (without timestamp) to ensure
+        each experiment has only one archive directory. If archive already exists,
+        it will be updated/overwritten.
         """
         project_root = PROJECT_ROOT
         archive_root = project_root / "data" / "experiment_snapshots" / method_name
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_dir = archive_root / f"{experiment_id}_{timestamp}"
+        # Use experiment_id only (no timestamp) to ensure one archive per experiment
+        archive_dir = archive_root / experiment_id
+        
+        # Remove existing archive if it exists to ensure clean archive
+        if archive_dir.exists():
+            print(f"[INFO] Removing existing archive for {experiment_id} to create fresh archive...")
+            shutil.rmtree(archive_dir)
         
         archive_dir.mkdir(parents=True, exist_ok=True)
         

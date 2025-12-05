@@ -5,6 +5,7 @@ Re-ranks retrieved documents using cross-encoder models for better relevance
 
 import numpy as np
 from typing import List, Dict, Any, Optional
+import re
 
 
 class CrossEncoderReranker:
@@ -30,12 +31,16 @@ class CrossEncoderReranker:
             from sentence_transformers import CrossEncoder
             self.model = CrossEncoder(self.model_name)
             print(f"[Reranker] Loaded cross-encoder model: {self.model_name}")
-        except ImportError:
-            print("[Reranker] Warning: sentence-transformers not installed. Using mock reranker.")
-            self.model = None
+        except ImportError as e:
+            # Fail-fast: reranker requires sentence-transformers
+            raise ImportError(
+                "[Reranker] sentence-transformers is required for CrossEncoderReranker"
+            ) from e
         except Exception as e:
-            print(f"[Reranker] Warning: Could not load model {self.model_name}: {e}. Using mock reranker.")
-            self.model = None
+            # Any other error should also surface immediately
+            raise RuntimeError(
+                f"[Reranker] Failed to load cross-encoder model {self.model_name}: {e}"
+            ) from e
     
     def rerank(self, 
                query: str,
@@ -56,11 +61,10 @@ class CrossEncoderReranker:
             return []
         
         if self.model is None:
-            # Mock reranking: return documents in original order with mock scores
-            return [
-                {'text': doc, 'score': 1.0 - i * 0.1, 'index': i}
-                for i, doc in enumerate(documents)
-            ]
+            raise RuntimeError(
+                "[Reranker] CrossEncoder model is not loaded. "
+                "Ensure sentence-transformers is installed and _load_model() succeeded."
+            )
         
         # Create query-document pairs
         pairs = [[query, doc] for doc in documents]
@@ -108,7 +112,6 @@ class SimpleReranker:
         Returns:
             Overlap score between 0 and 1
         """
-        import re
         query_words = set(re.findall(r'\b\w+\b', query.lower()))
         doc_words = set(re.findall(r'\b\w+\b', document.lower()))
         

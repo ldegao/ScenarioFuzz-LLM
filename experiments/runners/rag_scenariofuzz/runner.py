@@ -15,6 +15,7 @@ Example usage:
 """
 
 import argparse
+from pathlib import Path
 
 from experiments.core.experiment_manager import ExperimentManager
 
@@ -116,6 +117,46 @@ def main() -> None:
 
     if args.num_scenarios is None and args.hours is None:
         parser.error("You must specify at least one of --num-scenarios or --hours.")
+
+    # Input validation
+    if args.num_scenarios is not None:
+        if args.num_scenarios <= 0:
+            parser.error(f"--num-scenarios must be positive, got {args.num_scenarios}")
+        if args.num_scenarios > 1000000:  # Reasonable upper limit
+            parser.error(f"--num-scenarios too large: {args.num_scenarios} (max: 1000000)")
+    
+    if args.hours is not None:
+        if args.hours <= 0:
+            parser.error(f"--hours must be positive, got {args.hours}")
+        if args.hours > 720:  # 30 days max
+            parser.error(f"--hours too large: {args.hours} (max: 720 hours = 30 days)")
+    
+    # Validate output directory path
+    if args.output_root:
+        output_path = Path(args.output_root)
+        try:
+            # Check if parent directory exists and is writable
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            # Try to create a test file to verify write permissions
+            test_file = output_path.parent / ".write_test"
+            try:
+                test_file.touch()
+                test_file.unlink()
+            except (OSError, PermissionError) as e:
+                parser.error(f"Cannot write to output directory {args.output_root}: {e}")
+        except (OSError, PermissionError) as e:
+            parser.error(f"Invalid output directory path {args.output_root}: {e}")
+    
+    # Validate output directory
+    output_path = Path(args.output_root)
+    try:
+        output_path.mkdir(parents=True, exist_ok=True)
+        # Test write permission
+        test_file = output_path / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+    except (OSError, PermissionError) as e:
+        parser.error(f"Cannot write to output directory {args.output_root}: {e}")
 
     manager = ExperimentManager(output_base_dir=args.output_root)
 

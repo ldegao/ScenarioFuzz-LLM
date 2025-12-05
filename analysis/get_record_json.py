@@ -1,5 +1,8 @@
 import os
 import shutil
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def copy_json_with_time_record(src_dir, dest_dir):
@@ -26,7 +29,9 @@ def copy_json_with_time_record(src_dir, dest_dir):
                 print(f"File {src_file} copied to {dest_file}")
 
 
-# Example usage
-src_dir = '../data'  # Path to the source directory
-dest_dir = '../data_ot/time_record/'  # Path to the destination directory
-copy_json_with_time_record(src_dir, dest_dir)
+DEFAULT_SRC_DIR = PROJECT_ROOT / "data"  # Path to the source directory
+DEFAULT_DEST_DIR = PROJECT_ROOT / "data_ot" / "time_record"  # Path to the destination directory
+
+
+if __name__ == "__main__":
+    copy_json_with_time_record(str(DEFAULT_SRC_DIR), str(DEFAULT_DEST_DIR))

@@ -3,6 +3,8 @@ import os
 import json
 import re
 import shutil
+import random
+from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +13,10 @@ from scipy.spatial.distance import euclidean
 from scipy.sparse import dok_matrix
 from sklearn.manifold import MDS
 from sklearn.ensemble import IsolationForest
-import random
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "data"
 
 
 # Load JSON file
@@ -209,7 +214,7 @@ def find_nearest_points(points, num_points=10):
 def plot_similarity_matrix(similarity_matrix):
     file_paths = []
     output_folder = "json_out"
-    for root, dirs, files in os.walk('../data'):
+    for root, dirs, files in os.walk(str(DATA_DIR)):
         dirs.sort()
         files.sort()
         for filename in files:
@@ -350,5 +355,5 @@ def main(folder_path):
 
 # Execute main function
 if __name__ == "__main__":
-    folder_path = '../data'  # Replace with the path to your JSON files folder
+    folder_path = str(DATA_DIR)  # Path to JSON files folder under project data directory
     main(folder_path)

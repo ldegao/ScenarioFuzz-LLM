@@ -40,6 +40,14 @@ Output: Provide the following JSON format:
   "Most_Similar_Scenario": "scenario_id" // Choose from key of Scenario-database
 }
 
+Special rule for similarity:
+- If ?Scenario-dict? is empty (e.g., {} or contains no scenarios), you MUST set:
+  - "Overall Similarity": "0"
+  - "Most_Similar_Scenario": "None"
+- If ?Scenario-dict? contains one or more scenarios, you MUST compare ONLY with
+  these scenarios (do not invent other scenarios) to compute the similarity and
+  choose the most similar scenario ID from the keys of ?Scenario-dict?.
+
 
 Thinking step 1: "Please think about which background vehicles in the existing scene have similar characteristics (position, speed, angular acceleration, etc.) that lead to low scene diversity? By analyzing these similarities, determine which feature changes (position, speed, angular acceleration) will more effectively increase diversity." 
 Thinking step 2: "Please analyze the distribution and dynamics of background vehicles in the scene, and determine which specific vehicle feature changes (such as position and angular acceleration) will have the greatest impact on the behavior of the ADS vehicle and the overall diversity of the scene. Please consider whether changing its position or speed can introduce new behavior patterns or new potential interactions."

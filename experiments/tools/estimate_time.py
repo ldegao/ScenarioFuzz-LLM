@@ -39,8 +39,8 @@ Examples:
         type=str,
         nargs="?",
         # Note: DriveFuzz temporarily disabled
-        choices=["TM-Fuzzer", "DriveFuzz", "ScenarioFuzz-LLM", "RAG-ScenarioFuzz"],
-        help="Method to estimate (Note: DriveFuzz temporarily disabled)",
+        choices=["TM-Fuzzer", "ScenarioFuzz-LLM", "RAG-ScenarioFuzz"],
+        help="Method to estimate (Note: DriveFuzz is disabled)",
     )
     parser.add_argument(
         "--all-methods",
@@ -67,7 +67,7 @@ Examples:
     
     estimator = TimeEstimator()
     
-    # Note: DriveFuzz temporarily disabled
+    # Note: DriveFuzz is disabled
     methods = (
         ["TM-Fuzzer", "ScenarioFuzz-LLM", "RAG-ScenarioFuzz"]
         if args.all_methods

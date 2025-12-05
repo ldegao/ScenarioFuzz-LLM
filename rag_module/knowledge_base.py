@@ -32,31 +32,21 @@ class KnowledgeBase:
     
     def load_from_json(self, file_path: str) -> bool:
         """
-        Load scenarios from a JSON file
-        
-        Args:
-            file_path: Path to JSON file containing scenarios
-            
-        Returns:
-            True if successful, False otherwise
+        Load scenarios from a JSON file.
+        Fail-fast: any I/O or JSON errors will be raised.
         """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if isinstance(data, list):
-                self.scenarios.extend(data)
-            elif isinstance(data, dict) and 'scenarios' in data:
-                self.scenarios.extend(data['scenarios'])
-            else:
-                print(f"[KnowledgeBase] Warning: Unexpected JSON format in {file_path}")
-                return False
-            
-            print(f"[KnowledgeBase] Loaded {len(data) if isinstance(data, list) else len(data.get('scenarios', []))} scenarios from {file_path}")
-            return True
-        except Exception as e:
-            print(f"[KnowledgeBase] Error loading {file_path}: {e}")
-            return False
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if isinstance(data, list):
+            self.scenarios.extend(data)
+        elif isinstance(data, dict) and 'scenarios' in data:
+            self.scenarios.extend(data['scenarios'])
+        else:
+            raise ValueError(f"[KnowledgeBase] Unexpected JSON format in {file_path}")
+        
+        print(f"[KnowledgeBase] Loaded {len(data) if isinstance(data, list) else len(data.get('scenarios', []))} scenarios from {file_path}")
+        return True
     
     def load_mock_data(self) -> bool:
         """
@@ -255,29 +245,17 @@ class KnowledgeBase:
                 descriptions.append(scenario['description'])
             elif 'text' in scenario:
                 descriptions.append(scenario['text'])
-            else:
-                # Fallback: use string representation
-                descriptions.append(str(scenario))
         return descriptions
     
     def save_to_json(self, file_path: str) -> bool:
         """
-        Save all scenarios to a JSON file
-        
-        Args:
-            file_path: Path to save the JSON file
-            
-        Returns:
-            True if successful
+        Save all scenarios to a JSON file.
+        Fail-fast: any I/O errors will be raised.
         """
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.scenarios, f, indent=2, ensure_ascii=False)
-            print(f"[KnowledgeBase] Saved {len(self.scenarios)} scenarios to {file_path}")
-            return True
-        except Exception as e:
-            print(f"[KnowledgeBase] Error saving to {file_path}: {e}")
-            return False
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.scenarios, f, indent=2, ensure_ascii=False)
+        print(f"[KnowledgeBase] Saved {len(self.scenarios)} scenarios to {file_path}")
+        return True
     
     def clear(self):
         """Clear all scenarios from the knowledge base"""

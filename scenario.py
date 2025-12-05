@@ -97,6 +97,207 @@ class Scenario:
         self.town = self.seed_data["map"]
         # utils.switch_map(conf, self.town, client)
 
+    def __getstate__(self):
+        """
+        Custom pickle support for Scenario objects.
+        Excludes non-serializable objects (conf, state.client/world/G, town) that will be restored on load.
+        """
+        state = self.__dict__.copy()
+        # Don't save conf - it will be restored from globals on load
+        state['conf'] = None
+        # Don't save town (CARLA Map object) - it's not serializable
+        if 'town' in state:
+            state['town'] = None
+        # Check seed_data for CARLA Map objects
+        if 'seed_data' in state and isinstance(state['seed_data'], dict):
+            seed_data_copy = state['seed_data'].copy()
+            # If seed_data contains a CARLA Map object in 'map' field, replace it with string
+            if 'map' in seed_data_copy:
+                map_value = seed_data_copy['map']
+                # Check if it's a CARLA Map object (has get_waypoint method)
+                if hasattr(map_value, 'get_waypoint'):
+                    # It's a CARLA Map object, replace with None or string representation
+                    # The map will be restored from exec_state.world.get_map() on load
+                    seed_data_copy['map'] = None
+                elif isinstance(map_value, str):
+                    # Already a string, keep it
+                    pass
+                else:
+                    # Unknown type, set to None for safety
+                    seed_data_copy['map'] = None
+            state['seed_data'] = seed_data_copy
+        # Don't save CARLA objects in state - they will be reinitialized on load
+        if hasattr(self, 'state') and self.state:
+            state_copy = self.state.__dict__.copy()
+            # Clear CARLA object references
+            state_copy['client'] = None
+            state_copy['world'] = None
+            state_copy['G'] = None
+            state_copy['spawn_failed_object'] = None
+            # Clean laneinvasion_event list - remove CARLA LaneInvasionEvent objects
+            # Only keep serializable information (frame, timestamp)
+            if 'laneinvasion_event' in state_copy and state_copy['laneinvasion_event']:
+                state_copy['laneinvasion_event'] = [
+                    {'frame': getattr(e, 'frame', None), 'timestamp': getattr(e, 'timestamp', None)}
+                    if hasattr(e, 'frame') else None
+                    for e in state_copy['laneinvasion_event']
+                ]
+            
+            # Clean closest_cars_list - remove CARLA Vehicle objects
+            # Only keep serializable data (vehicle id, location, etc.)
+            if 'closest_cars_list' in state_copy and state_copy['closest_cars_list']:
+                cleaned_list = []
+                for car in state_copy['closest_cars_list']:
+                    if isinstance(car, dict):
+                        # Already in dictionary format, keep as is
+                        cleaned_list.append(car)
+                    elif hasattr(car, 'id'):
+                        # CARLA Vehicle object, convert to dictionary
+                        try:
+                            transform = car.get_transform()
+                            cleaned_list.append({
+                                'id': car.id,
+                                'type_id': getattr(car, 'type_id', 'unknown'),
+                                'location': (transform.location.x, transform.location.y, transform.location.z),
+                                'rotation': (transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll)
+                            })
+                        except Exception:
+                            # If unable to get transform, just keep id
+                            cleaned_list.append({'id': car.id})
+                    else:
+                        # Other type, convert to string
+                        try:
+                            cleaned_list.append(str(car))
+                        except Exception:
+                            # If even string conversion fails, skip
+                            pass
+                state_copy['closest_cars_list'] = cleaned_list
+            
+            # Ensure collision_to is a basic type (int or None)
+            if 'collision_to' in state_copy:
+                if hasattr(state_copy['collision_to'], 'id'):
+                    # If it's an Actor object, extract id
+                    state_copy['collision_to'] = state_copy['collision_to'].id
+                elif not isinstance(state_copy['collision_to'], (int, type(None))):
+                    # If not int or None, set to None
+                    state_copy['collision_to'] = None
+            
+            # Validate drawn_points is serializable
+            if 'drawn_points' in state_copy and state_copy['drawn_points']:
+                try:
+                    # Test if set is serializable
+                    import pickle
+                    pickle.dumps(state_copy['drawn_points'])
+                except Exception:
+                    # If not serializable, convert to list
+                    try:
+                        state_copy['drawn_points'] = list(state_copy['drawn_points'])
+                    except Exception:
+                        # If even list conversion fails, create empty list
+                        state_copy['drawn_points'] = []
+            
+            state['state'] = state_copy
+        return state
+
+    def __setstate__(self, state):
+        """
+        Custom unpickle support for Scenario objects.
+        Restores conf from globals and reinitializes state.
+        Note: conf will be restored in main() after init_env() sets globals()['conf']
+        """
+        self.__dict__.update(state)
+        
+        # Try to restore conf from globals immediately
+        # This is more robust than waiting for main() to set it
+        if 'conf' not in self.__dict__ or self.conf is None:
+            if 'conf' in globals() and globals()['conf'] is not None:
+                self.conf = globals()['conf']
+                # Verify conf has required attributes
+                if not hasattr(self.conf, 'queue_dir'):
+                    print(f"[WARNING] Restored conf from globals but missing required attributes")
+            else:
+                # Try to get conf from fuzzer module (it may be set there)
+                try:
+                    import fuzzer
+                    if hasattr(fuzzer, 'conf') and fuzzer.conf is not None:
+                        self.conf = fuzzer.conf
+                    else:
+                        self.conf = None
+                except (ImportError, AttributeError):
+                    self.conf = None
+                # Don't log warning here - conf will be restored later in main() or checkpoint loading
+                # Only log if we're sure it won't be restored (which we can't know at this point)
+        
+        # Validate conf if it exists
+        if self.conf is not None:
+            required_attrs = ['queue_dir', 'out_dir', 'timeout']
+            missing_attrs = [attr for attr in required_attrs if not hasattr(self.conf, attr)]
+            if missing_attrs:
+                print(f"[WARNING] Scenario {getattr(self, 'scenario_id', 'unknown')}: "
+                      f"conf is missing required attributes: {missing_attrs}")
+        
+        # Reinitialize state if needed
+        if 'state' in self.__dict__ and self.state:
+            from states import ScenarioState
+            if isinstance(self.state, dict):
+                # Reconstruct ScenarioState from dict
+                new_state = ScenarioState()
+                new_state.__dict__.update(self.state)
+                self.state = new_state
+            elif not isinstance(self.state, ScenarioState):
+                # If state is not a ScenarioState object, create a new one
+                self.state = ScenarioState()
+        
+        # Restore CARLA object references from exec_state if available
+        # This ensures state.client, state.world, state.G are set correctly
+        if hasattr(self, 'state') and self.state:
+            try:
+                import fuzzer
+                if hasattr(fuzzer, 'exec_state'):
+                    exec_state = fuzzer.exec_state
+                    if exec_state.client is not None:
+                        self.state.client = exec_state.client
+                    if exec_state.world is not None:
+                        self.state.world = exec_state.world
+                    if exec_state.G is not None:
+                        self.state.G = exec_state.G
+            except (AttributeError, ImportError) as e:
+                # exec_state not available yet, will be set later
+                pass
+        
+        # Restore town (CARLA Map) from exec_state if available
+        # town was set to None during serialization
+        if hasattr(self, 'town') and self.town is None:
+            try:
+                import fuzzer
+                if hasattr(fuzzer, 'exec_state') and hasattr(fuzzer.exec_state, 'world'):
+                    if fuzzer.exec_state.world is not None:
+                        self.town = fuzzer.exec_state.world.get_map()
+                        # Also update seed_data['map'] if it exists and was set to None
+                        if hasattr(self, 'seed_data') and isinstance(self.seed_data, dict):
+                            if self.seed_data.get('map') is None:
+                                self.seed_data['map'] = self.town
+            except (AttributeError, ImportError) as e:
+                # exec_state not available yet, will be set later
+                pass
+        
+        # Restore CARLA object references from exec_state if available
+        # This ensures state.client, state.world, state.G are set correctly
+        if hasattr(self, 'state') and self.state:
+            try:
+                import fuzzer
+                if hasattr(fuzzer, 'exec_state'):
+                    exec_state = fuzzer.exec_state
+                    if exec_state.client is not None:
+                        self.state.client = exec_state.client
+                    if exec_state.world is not None:
+                        self.state.world = exec_state.world
+                    if exec_state.G is not None:
+                        self.state.G = exec_state.G
+            except (AttributeError, ImportError) as e:
+                # exec_state not available yet, will be set later
+                pass
+
     def get_distance_from_player(self, location):
         sp = get_seed_sp_transform(self.seed_data)
         return location.distance(sp.location)
@@ -139,6 +340,42 @@ class Scenario:
         return filename
 
     def run_test(self, exec_state):
+        # Ensure conf is not None - restore from globals if needed
+        if self.conf is None:
+            # Try to restore from globals
+            if 'conf' in globals() and globals()['conf'] is not None:
+                self.conf = globals()['conf']
+                print(f"[INFO] Restored conf from globals for scenario {getattr(self, 'scenario_id', 'unknown')}")
+            else:
+                # Last resort: try to get from fuzzer module
+                try:
+                    import fuzzer
+                    if hasattr(fuzzer, 'conf') and fuzzer.conf is not None:
+                        self.conf = fuzzer.conf
+                        print(f"[INFO] Restored conf from fuzzer module for scenario {getattr(self, 'scenario_id', 'unknown')}")
+                    else:
+                        raise RuntimeError(
+                            f"conf is None for scenario {getattr(self, 'scenario_id', 'unknown')}. "
+                            f"Cannot run test. This usually indicates a serialization/deserialization issue. "
+                            f"Ensure init_env() has been called and conf is set globally."
+                        )
+                except (ImportError, AttributeError):
+                    raise RuntimeError(
+                        f"conf is None for scenario {getattr(self, 'scenario_id', 'unknown')}. "
+                        f"Cannot run test. This usually indicates a serialization/deserialization issue. "
+                        f"Ensure init_env() has been called and conf is set globally."
+                    )
+        
+        # Validate conf has required attributes
+        if self.conf is not None:
+            required_attrs = ['queue_dir', 'out_dir', 'timeout']
+            missing_attrs = [attr for attr in required_attrs if not hasattr(self.conf, attr)]
+            if missing_attrs:
+                raise RuntimeError(
+                    f"conf is missing required attributes: {missing_attrs}. "
+                    f"This indicates conf was not properly restored from serialization."
+                )
+        
         if self.conf.debug:
             print("[debug] use scenario:id=", self.scenario_id)
         self.reload_state()

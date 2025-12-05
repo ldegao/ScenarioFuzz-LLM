@@ -41,9 +41,12 @@ class VectorStore:
                 print(f"[VectorStore] Warning: Unknown index type {self.index_type}, using IndexFlatL2")
                 self.index = faiss.IndexFlatL2(self.vector_dim)
             print(f"[VectorStore] Initialized {self.index_type} index with dimension {self.vector_dim}")
-        except ImportError:
-            print("[VectorStore] Warning: faiss not installed. Using mock index.")
-            self.index = None
+        except ImportError as e:
+            # Fail-fast: vector store requires faiss for indexing
+            raise ImportError(
+                "[VectorStore] faiss is required for vector indexing. "
+                "Install faiss or disable RAG features."
+            ) from e
     
     def build_index(self, vectors: np.ndarray, texts: List[str], metadata: Optional[List[Dict[str, Any]]] = None):
         """
@@ -61,9 +64,10 @@ class VectorStore:
             raise ValueError(f"Text count mismatch: {len(texts)} texts for {vectors.shape[0]} vectors")
         
         if self.index is None:
-            # Mock index for testing without faiss
-            self._mock_build_index(vectors, texts, metadata)
-            return
+            raise RuntimeError(
+                "[VectorStore] Index has not been initialized. "
+                "Ensure faiss is installed and _initialize_index() succeeded."
+            )
         
         # Normalize vectors for cosine similarity (if using IP index)
         if self.index_type == "IndexFlatIP":
@@ -215,10 +219,8 @@ class VectorStore:
                 import faiss
                 self.index = faiss.read_index(index_path)
                 print(f"[VectorStore] Loaded index from {index_path}")
-            except ImportError:
-                print("[VectorStore] Warning: faiss not installed, cannot load index")
             except Exception as e:
-                print(f"[VectorStore] Error loading index: {e}")
+                raise RuntimeError(f"[VectorStore] Error loading index from {index_path}: {e}") from e
     
     def size(self) -> int:
         """Get the number of vectors in the index"""

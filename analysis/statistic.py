@@ -4,9 +4,11 @@
 import os
 import shutil
 import json
+from pathlib import Path
 
-# Specify the path for data saving
-data_save_path = '../data/save'
+# Specify the path for data saving (project-root independent)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+data_save_path = str(PROJECT_ROOT / "data" / "save")
 
 # Create a target folder if it does not exist
 def create_folder_if_not_exists(folder_path):
@@ -23,7 +25,8 @@ def copy_and_rename_video(source_video_path, destination_folder, scene_folder):
 # Main function
 def main():
     event_count = {event: 0 for event in ["crash", "stuck", "lane_invasion", "red", "speeding", "other", "correct", "error"]}
-    with open('../data/save/output.txt', 'w') as output_file:
+    output_log = os.path.join(data_save_path, 'output.txt')
+    with open(output_log, 'w') as output_file:
         # Iterate through all scene folders
         for scene_folder in os.listdir(data_save_path):
             scene_folder_path = os.path.join(data_save_path, scene_folder)

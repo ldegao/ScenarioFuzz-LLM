@@ -14,21 +14,79 @@ def get_proj_root():
 
 
 def set_carla_api_path():
-    # proj_root = get_proj_root()
-    #
-    # dist_path = os.path.join(proj_root, "carla/PythonAPI/carla/dist")
-    # glob_path = os.path.join(dist_path, "carla-*%d.%d-%s.egg" % (
-    #     sys.version_info.major,
-    #     sys.version_info.minor,
-    #     "win-amd64" if os.name == "nt" else "linux-x86_64"
-    # ))
+    """
+    Ensure CARLA PythonAPI egg is on sys.path.
 
-    try:
-        # api_path = glob.glob(glob_path)[0]carla-0.9.13-py3.6-linux-x86_64.egg
-        api_path = "./carla/PythonAPI/carla-0.9.13-py3.6-linux-x86_64.egg"
-    except IndexError:
-        print("Couldn't set Carla API path.")
-        exit(-1)
+    This resolves the egg path relative to the project root so that
+    it works no matter what the current working directory is.
+    """
+    proj_root = get_proj_root()
+
+    # We **only** accept CARLA 0.9.13 to match the running simulator.
+    target_version = "0.9.13"
+    py_ver = f"py{sys.version_info.major}.{sys.version_info.minor}"
+    platform_tag = "win-amd64" if os.name == "nt" else "linux-x86_64"
+
+    # Prefer the dist/ folder with versioned eggs if available
+    dist_path = os.path.join(proj_root, "carla", "PythonAPI", "carla", "dist")
+
+    # 1) Exact pattern under dist/, e.g. carla-0.9.13-py3.6-linux-x86_64.egg
+    exact_pattern = os.path.join(
+        dist_path, f"carla-{target_version}-{py_ver}-{platform_tag}.egg"
+    )
+
+    candidate_paths = []
+    if os.path.exists(exact_pattern):
+        candidate_paths.append(exact_pattern)
+
+    # 2) If exact name不存在, 在 dist 目录中查找所有包含 0.9.13 的 egg
+    if not candidate_paths and os.path.isdir(dist_path):
+        for path in glob.glob(os.path.join(dist_path, "carla-*.egg")):
+            if target_version in os.path.basename(path):
+                candidate_paths.append(path)
+
+    # 3) 旧版 fallback：项目根目录下的固定文件名（兼容之前的 py3.6 环境）
+    if not candidate_paths:
+        fallback36 = os.path.join(
+            proj_root,
+            "carla",
+            "PythonAPI",
+            "carla-0.9.13-py3.6-linux-x86_64.egg",
+        )
+        if os.path.exists(fallback36):
+            candidate_paths.append(fallback36)
+
+    # 4) 兼容你之前的备份路径：~/backup/carla-autoware/carla-api/carla-0.9.13-py3.7-linux-x86_64.egg
+    #    这里根据当前 Python 版本自动拼接 py{major}.{minor}
+    if not candidate_paths:
+        backup_api = os.path.join(
+            proj_root,
+            "backup",
+            "carla-autoware",
+            "carla-api",
+            f"carla-{target_version}-{py_ver}-{platform_tag}.egg",
+        )
+        if os.path.exists(backup_api):
+            candidate_paths.append(backup_api)
+
+    if not candidate_paths:
+        print("Couldn't find Carla 0.9.13 PythonAPI egg.")
+        print("Expected one of:")
+        print("  -", exact_pattern)
+        print(
+            "  - Any egg in",
+            dist_path,
+            "whose filename contains '0.9.13'",
+        )
+        print("  -", fallback36)
+        print("  -", backup_api)
+        print(
+            "Please install/build CARLA 0.9.13 PythonAPI and ensure the egg file exists at one of the above locations."
+        )
+        sys.exit(-1)
+
+    # 为了确定性，按字典序选第一个
+    api_path = sorted(candidate_paths)[0]
 
     if api_path not in sys.path:
         sys.path.append(api_path)
@@ -112,6 +170,13 @@ class Config:
         self.enable_rag_metrics = False
         self.metrics_output_dir = None
         self.metrics_config_path = "./config/metrics_config.json"
+
+        # GPT / Scenario database configuration
+        # By default we enable GPT-based evaluation; this can be disabled
+        # for non-GPT baselines such as TM-Fuzzer experiments.
+        self.enable_gpt_evaluation = True
+        self.scenario_db = "./data/scenario_db.json"
+        self.gpt_log_dir = "./data/gpt_logs"
 
     def set_paths(self):
         self.queue_dir = os.path.join(self.out_dir, "queue")

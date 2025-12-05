@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parse_line(line):
@@ -57,11 +60,13 @@ def main(filename):
         f"Overall Frame Ratio: {overall_frame_ratio}"
     ]
 
-    with open('../data/result.log', 'w') as result_file:
+    result_path = PROJECT_ROOT / "data" / "result.log"
+    with open(result_path, 'w') as result_file:
         for line in results:
             print(line)
             result_file.write(line + '\n')
 
 
 if __name__ == "__main__":
-    main('../data/record.log')
+    default_log = PROJECT_ROOT / "data" / "record.log"
+    main(str(default_log))
