@@ -312,6 +312,126 @@ For more detailed、step-by-step commands and troubleshooting tips, refer to:
 - `experiments/docs/PAPER_EXPERIMENTS.md`
 - `experiments/docs/QUICK_START.md`
 
+## Similarity Scoring Method Comparison Experiment
+
+This experiment compares four different similarity scoring methods to determine the best approach for measuring scenario diversity:
+
+- **answer2**: LLM-based similarity scoring (current default method)
+- **embedding**: Embedding-based semantic similarity using sentence transformers
+- **feature**: Feature-based similarity using multi-dimensional features (position, speed, angular acceleration)
+- **hybrid**: Hybrid similarity combining embedding and feature similarities
+
+### Evaluation Metrics
+
+The experiment evaluates each method using four diversity metrics:
+- **PC (Parameter Coverage)**: Parameter space combination coverage
+- **PEC (Behavior Coverage)**: Physical behavior equivalence class coverage
+- **TCD (Trajectory Diversity)**: Trajectory pattern diversity using DTW and entropy
+- **BCM (Behavior Matrix)**: Behavior combination coverage
+
+### Running the Comparison Experiment
+
+#### Option 1: Run All Methods Sequentially (Recommended)
+
+Use the batch script to automatically run all four methods:
+
+```bash
+bash experiments/scripts/run_similarity_comparison.sh \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results
+```
+
+This will run all four methods sequentially, each generating the specified number of scenarios.
+
+#### Option 2: Run Individual Methods
+
+Run a specific similarity method:
+
+```bash
+# LLM-based (answer2)
+python -m experiments.runners.run_similarity_comparison \
+  --num-scenarios 1000 \
+  --similarity-method answer2 \
+  --output-root ./experiment_results
+
+# Embedding-based
+python -m experiments.runners.run_similarity_comparison \
+  --num-scenarios 1000 \
+  --similarity-method embedding \
+  --output-root ./experiment_results
+
+# Feature-based
+python -m experiments.runners.run_similarity_comparison \
+  --num-scenarios 1000 \
+  --similarity-method feature \
+  --output-root ./experiment_results
+
+# Hybrid
+python -m experiments.runners.run_similarity_comparison \
+  --num-scenarios 1000 \
+  --similarity-method hybrid \
+  --hybrid-embedding-weight 0.6 \
+  --output-root ./experiment_results
+```
+
+#### Available Parameters
+
+- `--num-scenarios`: Number of scenarios to generate (required)
+- `--similarity-method`: Similarity scoring method (`answer2`, `embedding`, `feature`, `hybrid`)
+- `--output-root`: Output root directory (default: `./experiment_results`)
+- `--target`: Target ADS system (`behavior` or `autoware`, default: `behavior`)
+- `--town`: CARLA town number (default: 3)
+- `--timeout`: Scenario timeout in seconds (default: 60)
+- `--rag-k`: Top-k for RAG retrieval (default: 5)
+- `--hybrid-embedding-weight`: Weight for embedding in hybrid method (0.0-1.0, default: 0.6)
+- `--feature-position-weight`: Weight for position similarity (default: 0.3)
+- `--feature-speed-weight`: Weight for speed similarity (default: 0.3)
+- `--feature-angular-accel-weight`: Weight for angular acceleration similarity (default: 0.2)
+- `--feature-relative-position-weight`: Weight for relative position similarity (default: 0.2)
+
+### Analyzing Comparison Results
+
+After running all methods, analyze and compare the results:
+
+```bash
+python -m experiments.analysis.compare_similarity_methods \
+  --results-dir ./experiment_results/SimilarityComparison \
+  --output-dir ./reports/similarity_comparison
+```
+
+This will generate:
+- **comparison_report.json**: Detailed metrics comparison in JSON format
+- **comparison_report.md**: Human-readable comparison report with tables
+- **comparison_figures/**: Visualization charts including:
+  - Bar charts for each metric (PC, PEC, TCD, BCM)
+  - Radar chart showing normalized comparison across all metrics
+
+### Output Structure
+
+```
+experiment_results/
+  SimilarityComparison/
+    SimilarityComparison_answer2_YYYYMMDD_HHMMSS/
+      metrics_summary.json
+      ...
+    SimilarityComparison_embedding_YYYYMMDD_HHMMSS/
+      metrics_summary.json
+      ...
+    SimilarityComparison_feature_YYYYMMDD_HHMMSS/
+      metrics_summary.json
+      ...
+    SimilarityComparison_hybrid_YYYYMMDD_HHMMSS/
+      metrics_summary.json
+      ...
+```
+
+### Key Features
+
+- **Automatic RAG Initialization**: RAG is automatically enabled for all methods (required for embedding and hybrid methods)
+- **Consistent Configuration**: All methods use the same experimental parameters for fair comparison
+- **Comprehensive Metrics**: All four diversity metrics (PC, PEC, TCD, BCM) are automatically collected
+- **Detailed Analysis**: Comparison reports include mean, std, min, max, and run count for each metric
+
 ## Data Availability
 
 The experimental data, including datasets, results, and unique violation scenarios identified by ScenarioFuzz-LLM, is available for download. Access the data here: 

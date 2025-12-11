@@ -76,7 +76,12 @@ class ExperimentManager:
             **kwargs: Additional configuration
         """
         if experiment_id is None:
-            experiment_id = f"{method_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            if method_name == "SimilarityComparison":
+                # Include similarity method in experiment ID
+                similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
+                experiment_id = f"{method_name}_{similarity_method}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            else:
+                experiment_id = f"{method_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         print(f"\n{'='*60}")
         print(f"Starting Quantitative Experiment: {method_name}")
@@ -151,7 +156,7 @@ class ExperimentManager:
                 )
                 return
             
-            # For ScenarioFuzz-LLM and RAG-ScenarioFuzz:
+            # For ScenarioFuzz-LLM, RAG-ScenarioFuzz, and SimilarityComparison:
             # Need to manage environment before running fuzzer
             script_dir = PROJECT_ROOT / "script"
             
@@ -162,6 +167,36 @@ class ExperimentManager:
             # Run init.sh to clean environment before each run
             print("[INFO] Running init to clean environment...")
             run_init_script(script_dir, project_root)
+            
+            # Lazy import to avoid api.json dependency
+            # Initialize environment
+            conf, town, town_map, client, world, G = fuzzer.init_env(args)
+            
+            # Method-specific configuration
+            if method_name == "RAG-ScenarioFuzz":
+                conf.enable_rag = True
+                conf.enable_rag_metrics = True
+                conf.rag_k = kwargs.get('rag_k', 5)
+            elif method_name == "ScenarioFuzz-LLM":
+                conf.enable_rag = False
+                # Still enable metrics for non-RAG ScenarioFuzz-LLM
+                conf.enable_rag_metrics = True
+            elif method_name == "SimilarityComparison":
+                # SimilarityComparison: always enable RAG (needed for embedding/hybrid methods)
+                conf.enable_rag = True
+                conf.enable_rag_metrics = True
+                conf.rag_k = kwargs.get('rag_k', 5)
+                # Configure similarity scoring method
+                similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
+                conf.similarity_scoring_method = similarity_method
+                # Configure hybrid method weights
+                conf.hybrid_embedding_weight = kwargs.get('hybrid_embedding_weight', 0.6)
+                # Configure feature method weights
+                conf.feature_position_weight = kwargs.get('feature_position_weight', 0.3)
+                conf.feature_speed_weight = kwargs.get('feature_speed_weight', 0.3)
+                conf.feature_angular_accel_weight = kwargs.get('feature_angular_accel_weight', 0.2)
+                conf.feature_relative_position_weight = kwargs.get('feature_relative_position_weight', 0.2)
+                print(f"[SimilarityComparison] Using similarity scoring method: {similarity_method}")
             
             # Run fuzzing (modified to respect scenario limit)
             self._run_with_scenario_limit(args, experiment_id, num_scenarios)
@@ -237,7 +272,12 @@ class ExperimentManager:
         duration_seconds = duration_hours * 3600
         
         if experiment_id is None:
-            experiment_id = f"{method_name}_timed_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            if method_name == "SimilarityComparison":
+                # Include similarity method in experiment ID
+                similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
+                experiment_id = f"{method_name}_{similarity_method}_timed_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            else:
+                experiment_id = f"{method_name}_timed_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         print(f"\n{'='*60}")
         print(f"Starting Timed Experiment: {method_name}")
@@ -278,7 +318,7 @@ class ExperimentManager:
                 )
                 return
             
-            # For ScenarioFuzz-LLM and RAG-ScenarioFuzz:
+            # For ScenarioFuzz-LLM, RAG-ScenarioFuzz, and SimilarityComparison:
             # Need to manage environment before running fuzzer
             script_dir = PROJECT_ROOT / "script"
             
@@ -303,6 +343,22 @@ class ExperimentManager:
                 conf.enable_rag = False
                 # Still enable metrics for non-RAG ScenarioFuzz-LLM
                 conf.enable_rag_metrics = True
+            elif method_name == "SimilarityComparison":
+                # SimilarityComparison: always enable RAG (needed for embedding/hybrid methods)
+                conf.enable_rag = True
+                conf.enable_rag_metrics = True
+                conf.rag_k = kwargs.get('rag_k', 5)
+                # Configure similarity scoring method
+                similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
+                conf.similarity_scoring_method = similarity_method
+                # Configure hybrid method weights
+                conf.hybrid_embedding_weight = kwargs.get('hybrid_embedding_weight', 0.6)
+                # Configure feature method weights
+                conf.feature_position_weight = kwargs.get('feature_position_weight', 0.3)
+                conf.feature_speed_weight = kwargs.get('feature_speed_weight', 0.3)
+                conf.feature_angular_accel_weight = kwargs.get('feature_angular_accel_weight', 0.2)
+                conf.feature_relative_position_weight = kwargs.get('feature_relative_position_weight', 0.2)
+                print(f"[SimilarityComparison] Using similarity scoring method: {similarity_method}")
             # Note: DriveFuzz is disabled
             # DriveFuzz support has been removed. If needed in the future,
             # uncomment and update the following:
@@ -314,28 +370,50 @@ class ExperimentManager:
             conf.experiment_timeout = duration_seconds
             conf.experiment_start_time = start_time
             
-            # Run fuzzing - the main loop will check time limit
-            # We use a wrapper that monitors time
+            # Get max_scenarios if specified (for dual constraint mode)
+            max_scenarios = kwargs.get('max_scenarios', None)
+            if max_scenarios is not None and max_scenarios > 0:
+                # Ensure max_scenarios is set in args for fuzzer to check
+                if hasattr(args, 'max_scenarios'):
+                    args.max_scenarios = max_scenarios
+                else:
+                    args.max_scenarios = max_scenarios
+                print(f"[INFO] Timed experiment with dual constraints: time limit = {duration_hours}h, scenario limit = {max_scenarios}")
+            
+            # Run fuzzing - the main loop will check time limit and scenario limit
+            # We use a wrapper that monitors both constraints
             # Use threading.Event for proper thread management
             stop_monitoring = threading.Event()
             
             def monitor_progress():
-                """Monitor progress in background"""
+                """Monitor progress in background, checking both time and scenario limits"""
                 while not stop_monitoring.is_set():
                     elapsed = time.time() - start_time
                     remaining = duration_seconds - elapsed
                     
                     # Check if time limit reached
                     if elapsed >= duration_seconds:
+                        print(f"[TIME LIMIT] Reached time limit: {elapsed:.0f}s / {duration_seconds:.0f}s")
                         break
                     
                     scenario_count = self._count_scenarios(method_dir)
                     self.progress_tracker.update_progress(experiment_id, scenario_count)
                     
-                    if remaining > 0:
-                        print(f"[Progress] Elapsed: {timedelta(seconds=int(elapsed))}, "
-                              f"Remaining: {timedelta(seconds=int(remaining))}, "
-                              f"Scenarios: {scenario_count}")
+                    # Check if scenario limit reached (if specified)
+                    if max_scenarios is not None and max_scenarios > 0:
+                        if scenario_count >= max_scenarios:
+                            print(f"[SCENARIO LIMIT] Reached scenario limit: {scenario_count}/{max_scenarios}")
+                            break
+                        remaining_scenarios = max_scenarios - scenario_count
+                        if remaining > 0:
+                            print(f"[Progress] Elapsed: {timedelta(seconds=int(elapsed))}, "
+                                  f"Remaining time: {timedelta(seconds=int(remaining))}, "
+                                  f"Scenarios: {scenario_count}/{max_scenarios} (need {remaining_scenarios} more)")
+                    else:
+                        if remaining > 0:
+                            print(f"[Progress] Elapsed: {timedelta(seconds=int(elapsed))}, "
+                                  f"Remaining: {timedelta(seconds=int(remaining))}, "
+                                  f"Scenarios: {scenario_count}")
                     
                     # Wait with timeout to allow checking stop_event
                     if stop_monitoring.wait(timeout=30):
@@ -411,8 +489,8 @@ class ExperimentManager:
         # Always enable multi-dimensional metrics for experiments
         args_list.append('--enable-rag-metrics')
         
-        # Enable RAG flags only for RAG-ScenarioFuzz method
-        if method_name == "RAG-ScenarioFuzz":
+        # Enable RAG flags for RAG-ScenarioFuzz and SimilarityComparison methods
+        if method_name == "RAG-ScenarioFuzz" or method_name == "SimilarityComparison":
             args_list.append('--enable-rag')
         
         if kwargs.get('debug'):

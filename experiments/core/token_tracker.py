@@ -9,6 +9,14 @@ from pathlib import Path
 from typing import Dict, Optional
 from collections import defaultdict
 
+# Pricing constants (per 1M tokens)
+INPUT_TOKEN_PRICE_PER_MILLION = 0.25  # US $0.25 / 1,000,000 tokens
+OUTPUT_TOKEN_PRICE_PER_MILLION = 2.00  # US $2.00 / 1,000,000 tokens
+
+# Per-token prices
+INPUT_TOKEN_PRICE = INPUT_TOKEN_PRICE_PER_MILLION / 1_000_000  # $0.00000025 per token
+OUTPUT_TOKEN_PRICE = OUTPUT_TOKEN_PRICE_PER_MILLION / 1_000_000  # $0.000002 per token
+
 
 class TokenTracker:
     """
@@ -21,17 +29,40 @@ class TokenTracker:
             'prompt_tokens': 0,
             'completion_tokens': 0,
             'total_tokens': 0,
-            'call_count': 0
+            'call_count': 0,
+            'input_cost_usd': 0.0,
+            'output_cost_usd': 0.0,
+            'total_cost_usd': 0.0
         })
         # Track per-model usage
         self._model_stats = defaultdict(lambda: {
             'prompt_tokens': 0,
             'completion_tokens': 0,
             'total_tokens': 0,
-            'call_count': 0
+            'call_count': 0,
+            'input_cost_usd': 0.0,
+            'output_cost_usd': 0.0,
+            'total_cost_usd': 0.0
         })
     
-    def record_usage(self, model: str = "gpt-4-turbo", 
+    @staticmethod
+    def calculate_cost(prompt_tokens: int, completion_tokens: int) -> tuple:
+        """
+        Calculate cost based on token usage
+        
+        Args:
+            prompt_tokens: Number of input/prompt tokens
+            completion_tokens: Number of output/completion tokens
+            
+        Returns:
+            Tuple of (input_cost, output_cost, total_cost) in USD
+        """
+        input_cost = prompt_tokens * INPUT_TOKEN_PRICE
+        output_cost = completion_tokens * OUTPUT_TOKEN_PRICE
+        total_cost = input_cost + output_cost
+        return (input_cost, output_cost, total_cost)
+    
+    def record_usage(self, model: str = None, 
                      prompt_tokens: int = 0,
                      completion_tokens: int = 0,
                      total_tokens: int = 0):
@@ -39,27 +70,43 @@ class TokenTracker:
         Record token usage for a single API call
         
         Args:
-            model: Model name (e.g., "gpt-4-turbo")
+            model: Model name. If None, tries to get DEFAULT_MODEL from gpt module.
             prompt_tokens: Number of prompt tokens
             completion_tokens: Number of completion tokens
             total_tokens: Total tokens (if provided, will be used instead of sum)
         """
+        if model is None:
+            try:
+                import gpt
+                model = getattr(gpt, 'DEFAULT_MODEL', 'gpt-4o-mini')
+            except:
+                model = 'gpt-4o-mini'
+        
         with self._lock:
             # Calculate total if not provided
             if total_tokens == 0:
                 total_tokens = prompt_tokens + completion_tokens
+            
+            # Calculate cost for this call
+            input_cost, output_cost, call_cost = self.calculate_cost(prompt_tokens, completion_tokens)
             
             # Update overall stats
             self._stats['all']['prompt_tokens'] += prompt_tokens
             self._stats['all']['completion_tokens'] += completion_tokens
             self._stats['all']['total_tokens'] += total_tokens
             self._stats['all']['call_count'] += 1
+            self._stats['all']['input_cost_usd'] += input_cost
+            self._stats['all']['output_cost_usd'] += output_cost
+            self._stats['all']['total_cost_usd'] += call_cost
             
             # Update per-model stats
             self._model_stats[model]['prompt_tokens'] += prompt_tokens
             self._model_stats[model]['completion_tokens'] += completion_tokens
             self._model_stats[model]['total_tokens'] += total_tokens
             self._model_stats[model]['call_count'] += 1
+            self._model_stats[model]['input_cost_usd'] += input_cost
+            self._model_stats[model]['output_cost_usd'] += output_cost
+            self._model_stats[model]['total_cost_usd'] += call_cost
     
     def get_stats(self) -> Dict:
         """
@@ -117,7 +164,10 @@ class TokenTracker:
                         'prompt_tokens': 0,
                         'completion_tokens': 0,
                         'total_tokens': 0,
-                        'call_count': 0
+                        'call_count': 0,
+                        'input_cost_usd': 0.0,
+                        'output_cost_usd': 0.0,
+                        'total_cost_usd': 0.0
                     })
                     for model, stats in data['by_model'].items():
                         self._model_stats[model] = stats
@@ -142,6 +192,15 @@ class TokenTracker:
         print(f"  Completion Tokens: {overall['completion_tokens']:,}")
         print(f"  Total Tokens:   {overall['total_tokens']:,}")
         
+        # Cost information
+        input_cost = overall.get('input_cost_usd', 0.0)
+        output_cost = overall.get('output_cost_usd', 0.0)
+        total_cost = overall.get('total_cost_usd', 0.0)
+        print(f"\n  Cost Breakdown:")
+        print(f"    Input Cost:  ${input_cost:.6f} USD")
+        print(f"    Output Cost: ${output_cost:.6f} USD")
+        print(f"    Total Cost:  ${total_cost:.6f} USD")
+        
         if stats['by_model']:
             print(f"\nBy Model:")
             for model, model_stats in stats['by_model'].items():
@@ -150,6 +209,11 @@ class TokenTracker:
                 print(f"    Prompt Tokens: {model_stats['prompt_tokens']:,}")
                 print(f"    Completion Tokens: {model_stats['completion_tokens']:,}")
                 print(f"    Total Tokens: {model_stats['total_tokens']:,}")
+                # Per-model cost
+                model_input_cost = model_stats.get('input_cost_usd', 0.0)
+                model_output_cost = model_stats.get('output_cost_usd', 0.0)
+                model_total_cost = model_stats.get('total_cost_usd', 0.0)
+                print(f"    Cost: ${model_total_cost:.6f} USD (Input: ${model_input_cost:.6f}, Output: ${model_output_cost:.6f})")
         
         print("="*60 + "\n")
 

@@ -25,6 +25,16 @@ def run_tmfuzzer_quantitative(num_scenarios: int, output_dir: str = "./experimen
                               town: str = "3", timeout: int = 60):
     """
     Run TM-Fuzzer quantitative run (converted to timed run via time estimate).
+    
+    WARNING: This is an ESTIMATION mode. The actual number of scenarios generated
+    may differ from the target because TM-Fuzzer's script/test.py only supports
+    time-based control, not explicit scenario count limits. The function estimates
+    the required duration based on an average scenario time (50 seconds per scenario)
+    and runs for that duration. The actual scenario count will depend on the real
+    execution time per scenario, which may vary.
+    
+    For precise scenario counts, consider running multiple timed runs or manually
+    adjusting the duration based on observed scenario generation rates.
     """
     # Input validation
     if num_scenarios <= 0:
@@ -37,14 +47,14 @@ def run_tmfuzzer_quantitative(num_scenarios: int, output_dir: str = "./experimen
     estimated_duration = max(int(num_scenarios * avg_scenario_time), 300)
     
     print(f"\n{'='*60}")
-    print(f"Running TM-Fuzzer Baseline")
+    print(f"Running TM-Fuzzer Baseline (ESTIMATION MODE)")
     print(f"Target scenarios: {num_scenarios}")
     print(f"Estimated duration: {estimated_duration} seconds (~{estimated_duration/3600:.2f} hours)")
+    print(f"{'='*60}")
+    print(f"[WARNING] This is an estimation mode. Actual scenario count may vary.")
+    print(f"[WARNING] TM-Fuzzer uses time-based control, not explicit scenario limits.")
+    print(f"[WARNING] The actual number of scenarios will depend on real execution times.")
     print(f"{'='*60}\n")
-    
-    # Note: This is an estimate. Actual scenario count may vary.
-    # The timed run will stop when time expires, not when scenario count is reached.
-    # For precise scenario counts, consider running multiple timed runs or adjusting duration.
     
     # Locate script directory and test script
     project_root = PROJECT_ROOT

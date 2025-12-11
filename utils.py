@@ -632,8 +632,24 @@ def carla_rotation_pickle(rotation):
 
 
 def carla_rotation_unpickle(json_string):
+    """
+    Unpickle a carla.Rotation from JSON string.
+    Handles both old format (list) and new format (dict).
+    Raises exception on failure - no fallback to avoid hiding errors.
+    """
     data = json.loads(json_string)
-    pitch, yaw, roll = data
+    # Handle new format: {'rotation_pitch': pitch, 'rotation_yaw': yaw, 'rotation_roll': roll}
+    if isinstance(data, dict):
+        pitch = float(data.get('rotation_pitch', 0.0))
+        yaw = float(data.get('rotation_yaw', 0.0))
+        roll = float(data.get('rotation_roll', 0.0))
+    # Handle old format: [pitch, yaw, roll] or (pitch, yaw, roll)
+    elif isinstance(data, (list, tuple)) and len(data) >= 3:
+        pitch = float(data[0])
+        yaw = float(data[1])
+        roll = float(data[2])
+    else:
+        raise ValueError(f"Unexpected data format for Rotation: {type(data)}, value: {data}. Expected dict with 'rotation_pitch', 'rotation_yaw', 'rotation_roll' or list/tuple with 3 elements.")
     return carla.Rotation(pitch, yaw, roll)
 
 

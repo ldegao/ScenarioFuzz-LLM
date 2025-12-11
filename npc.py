@@ -281,7 +281,12 @@ class NPC:
         # split a vehicle into two similar vehicles
         # return the new vehicle
         while True:
-            npc_loc = npc.spawn_point.location
+            # Handle case where spawn_point might be None
+            if npc.spawn_point is None:
+                # Try to get position from instance or raise error
+                npc_loc = npc.get_position()
+            else:
+                npc_loc = npc.spawn_point.location
             x = 0
             y = 0
             while -2 <= x <= 2:

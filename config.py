@@ -55,6 +55,20 @@ def set_carla_api_path():
         )
         if os.path.exists(fallback36):
             candidate_paths.append(fallback36)
+    
+    # 3.5) 检查项目目录下的 CARLA（如果 proj_root 不是项目目录本身）
+    if not candidate_paths:
+        # 获取 config.py 所在目录（项目目录）
+        config_path = os.path.abspath(__file__)
+        project_dir = os.path.dirname(config_path)  # ScenarioFuzz-LLM 目录
+        project_carla = os.path.join(
+            project_dir,
+            "carla",
+            "PythonAPI",
+            f"carla-{target_version}-{py_ver}-{platform_tag}.egg",
+        )
+        if os.path.exists(project_carla):
+            candidate_paths.append(project_carla)
 
     # 4) 兼容你之前的备份路径：~/backup/carla-autoware/carla-api/carla-0.9.13-py3.7-linux-x86_64.egg
     #    这里根据当前 Python 版本自动拼接 py{major}.{minor}

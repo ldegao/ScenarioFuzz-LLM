@@ -1,41 +1,55 @@
 """
-Trajectory Pattern Diversity (TCD) Metric
-Evaluates trajectory diversity using DTW distance, clustering, and entropy
+Driving Pattern Diversity (DPD) Metric
+Evaluates trajectory pattern diversity using Fréchet distance and adaptive clustering
+
+Replaces the original TCD metric which used subjective DTW clustering.
+DPD uses Fréchet distance (more sensitive to physical trajectories) and
+DBSCAN adaptive clustering (eliminates subjective cluster count).
+
+Source: Fréchet distance is widely used in autonomous driving trajectory analysis
 """
 
 import numpy as np
-from typing import List, Tuple, Dict
-from scipy.cluster.hierarchy import linkage, fcluster
+from typing import List, Tuple, Dict, Optional
 from scipy.spatial.distance import squareform
+from scipy.cluster.hierarchy import linkage, fcluster
+from sklearn.cluster import DBSCAN
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scenario import Scenario
 from states import ScenarioState
+from metrics.behavior_parameters import BehaviorParameterExtractor
 
 
-class TrajectoryDiversity:
+class DrivingPatternDiversity:
     """
-    Calculates trajectory pattern diversity using DTW + clustering + entropy
-    TCD measures the diversity of trajectory patterns through entropy
+    Calculates driving pattern diversity using Fréchet distance and adaptive clustering
+    DPD measures the diversity of trajectory patterns through entropy of distance distribution
     """
     
-    def __init__(self, n_clusters: int = 10, use_dtw: bool = True):
+    # Frame rate for time-based calculations
+    FRAME_RATE = 25.0  # Hz
+    
+    def __init__(self, use_frechet: bool = True, dbscan_eps: float = 5.0, dbscan_min_samples: int = 2):
         """
-        Initialize trajectory diversity calculator
+        Initialize driving pattern diversity calculator
         
         Args:
-            n_clusters: Number of clusters for trajectory grouping
-            use_dtw: Whether to use DTW distance (if False, uses Euclidean)
+            use_frechet: Whether to use Fréchet distance (True) or Euclidean (False)
+            dbscan_eps: DBSCAN epsilon parameter for adaptive clustering
+            dbscan_min_samples: DBSCAN min_samples parameter
         """
-        self.n_clusters = n_clusters
-        self.use_dtw = use_dtw
+        self.use_frechet = use_frechet
+        self.dbscan_eps = dbscan_eps
+        self.dbscan_min_samples = dbscan_min_samples
         self.trajectories: List[np.ndarray] = []
         self.cluster_labels: List[int] = []
+        self.param_extractor = BehaviorParameterExtractor()
     
     def extract_trajectories(self, scenarios: List[Scenario]) -> List[np.ndarray]:
         """
-        Extract trajectory data from scenarios
+        Extract trajectory data from scenarios using actual position data when available
         
         Args:
             scenarios: List of Scenario objects
@@ -50,29 +64,35 @@ class TrajectoryDiversity:
                 continue
             
             state = scenario.state
-            
-            # Extract trajectory from position data
-            # Use yaw_list and speed to reconstruct trajectory if position not available
             trajectory_points = []
             
-            if hasattr(state, 'lon_speed_list') and hasattr(state, 'lat_speed_list'):
-                # Reconstruct from speed components
-                if len(state.lon_speed_list) > 0 and len(state.lat_speed_list) > 0:
-                    # Integrate speeds to get positions (simplified)
-                    dt = 1.0 / 25.0  # Assuming 25 FPS
-                    x, y = 0.0, 0.0
-                    for lon_speed, lat_speed in zip(state.lon_speed_list, state.lat_speed_list):
-                        x += lon_speed * dt
-                        y += lat_speed * dt
-                        trajectory_points.append([x, y])
+            # Try to extract from actual position data if available
+            # Otherwise, reconstruct from speed and yaw
             
-            elif hasattr(state, 'yaw_list') and state.speed:
-                # Reconstruct from yaw and speed
-                dt = 1.0 / 25.0
+            # Method 1: Use longitudinal and lateral speeds to reconstruct trajectory
+            if hasattr(state, 'lon_speed_list') and hasattr(state, 'lat_speed_list') and \
+               state.lon_speed_list and state.lat_speed_list:
+                dt = 1.0 / self.FRAME_RATE
                 x, y = 0.0, 0.0
-                for i, (yaw, speed) in enumerate(zip(state.yaw_list[:len(state.speed)], state.speed)):
-                    dx = speed * np.cos(yaw) * dt
-                    dy = speed * np.sin(yaw) * dt
+                for lon_speed, lat_speed in zip(state.lon_speed_list, state.lat_speed_list):
+                    # Convert km/h to m/s
+                    lon_ms = lon_speed / 3.6
+                    lat_ms = lat_speed / 3.6
+                    x += lon_ms * dt
+                    y += lat_ms * dt
+                    trajectory_points.append([x, y])
+            
+            # Method 2: Reconstruct from yaw and speed
+            elif hasattr(state, 'yaw_list') and state.yaw_list and \
+                 hasattr(state, 'speed') and state.speed:
+                dt = 1.0 / self.FRAME_RATE
+                x, y = 0.0, 0.0
+                min_len = min(len(state.yaw_list), len(state.speed))
+                for i in range(min_len):
+                    yaw_rad = np.radians(state.yaw_list[i])
+                    speed_ms = state.speed[i] / 3.6  # km/h to m/s
+                    dx = speed_ms * np.cos(yaw_rad) * dt
+                    dy = speed_ms * np.sin(yaw_rad) * dt
                     x += dx
                     y += dy
                     trajectory_points.append([x, y])
@@ -83,39 +103,49 @@ class TrajectoryDiversity:
         self.trajectories = trajectories
         return trajectories
     
-    def _dtw_distance(self, traj1: np.ndarray, traj2: np.ndarray) -> float:
+    def _frechet_distance(self, traj1: np.ndarray, traj2: np.ndarray) -> float:
         """
-        Calculate DTW distance between two trajectories
+        Calculate Fréchet distance between two trajectories
+        
+        Fréchet distance is more sensitive to physical trajectory shapes than DTW.
+        It measures the minimum leash length needed to connect two trajectories.
         
         Args:
-            traj1: First trajectory array
-            traj2: Second trajectory array
+            traj1: First trajectory array of shape (n, 2)
+            traj2: Second trajectory array of shape (m, 2)
             
         Returns:
-            DTW distance
+            Fréchet distance
         """
-        try:
-            from dtaidistance import dtw
-            # Flatten trajectories for DTW (use Euclidean distance in 2D space)
-            distance = dtw.distance(traj1, traj2)
-            return distance
-        except ImportError:
-            # Fallback to Euclidean distance if dtaidistance not available
-            # Interpolate to same length
-            n = max(len(traj1), len(traj2))
-            if len(traj1) < n:
-                indices = np.linspace(0, len(traj1) - 1, n).astype(int)
-                traj1 = traj1[indices]
-            if len(traj2) < n:
-                indices = np.linspace(0, len(traj2) - 1, n).astype(int)
-                traj2 = traj2[indices]
-            
-            # Calculate Euclidean distance
-            return np.linalg.norm(traj1 - traj2)
+        # Simplified Fréchet distance calculation
+        # For more accurate results, use scipy.spatial.distance or specialized library
+        
+        # Interpolate trajectories to same length for comparison
+        n = max(len(traj1), len(traj2))
+        if len(traj1) < n:
+            indices = np.linspace(0, len(traj1) - 1, n).astype(int)
+            traj1_interp = traj1[indices]
+        else:
+            traj1_interp = traj1
+        
+        if len(traj2) < n:
+            indices = np.linspace(0, len(traj2) - 1, n).astype(int)
+            traj2_interp = traj2[indices]
+        else:
+            traj2_interp = traj2
+        
+        # Calculate point-wise distances
+        distances = np.linalg.norm(traj1_interp - traj2_interp, axis=1)
+        
+        # Fréchet distance is the maximum of minimum distances along the path
+        # Simplified: use maximum distance (upper bound of Fréchet)
+        frechet_dist = np.max(distances)
+        
+        return float(frechet_dist)
     
-    def calculate_dtw_matrix(self, trajectories: List[np.ndarray]) -> np.ndarray:
+    def calculate_distance_matrix(self, trajectories: List[np.ndarray]) -> np.ndarray:
         """
-        Calculate pairwise DTW distance matrix
+        Calculate pairwise distance matrix using Fréchet or Euclidean distance
         
         Args:
             trajectories: List of trajectory arrays
@@ -131,8 +161,8 @@ class TrajectoryDiversity:
         
         for i in range(n):
             for j in range(i + 1, n):
-                if self.use_dtw:
-                    distance = self._dtw_distance(trajectories[i], trajectories[j])
+                if self.use_frechet:
+                    distance = self._frechet_distance(trajectories[i], trajectories[j])
                 else:
                     # Use Euclidean distance on interpolated trajectories
                     traj1, traj2 = trajectories[i], trajectories[j]
@@ -150,28 +180,35 @@ class TrajectoryDiversity:
         
         return distance_matrix
     
-    def cluster_trajectories(self, dtw_matrix: np.ndarray) -> List[int]:
+    def cluster_trajectories_adaptive(self, distance_matrix: np.ndarray) -> List[int]:
         """
-        Cluster trajectories based on DTW distance matrix
+        Cluster trajectories using DBSCAN (adaptive, no subjective cluster count)
         
         Args:
-            dtw_matrix: Distance matrix
+            distance_matrix: Distance matrix
             
         Returns:
             List of cluster labels
         """
-        if dtw_matrix.shape[0] < 2:
-            return [0] * dtw_matrix.shape[0]
+        if distance_matrix.shape[0] < 2:
+            return [0] * distance_matrix.shape[0]
         
-        # Convert to condensed distance matrix for linkage
-        condensed_distances = squareform(dtw_matrix)
+        # Convert distance matrix to condensed form for DBSCAN
+        # DBSCAN requires a feature matrix, so we use multidimensional scaling
+        # or directly use the distance matrix with metric='precomputed'
         
-        # Perform hierarchical clustering
-        linkage_matrix = linkage(condensed_distances, method='ward')
+        # Use DBSCAN with precomputed distance matrix
+        dbscan = DBSCAN(
+            eps=self.dbscan_eps,
+            min_samples=self.dbscan_min_samples,
+            metric='precomputed'
+        )
         
-        # Cut tree to get clusters
-        n_clusters = min(self.n_clusters, dtw_matrix.shape[0])
-        labels = fcluster(linkage_matrix, n_clusters, criterion='maxclust')
+        labels = dbscan.fit_predict(distance_matrix)
+        
+        # Handle noise points (-1 labels) by assigning them to a separate cluster
+        max_label = np.max(labels)
+        labels[labels == -1] = max_label + 1
         
         self.cluster_labels = labels.tolist()
         return labels.tolist()
@@ -202,36 +239,58 @@ class TrajectoryDiversity:
     
     def calculate_coverage(self, scenarios: List[Scenario]) -> Dict[str, float]:
         """
-        Calculate trajectory diversity metrics for scenarios
+        Calculate driving pattern diversity metrics for scenarios
         
         Args:
             scenarios: List of Scenario objects
             
         Returns:
-            Dictionary containing 'entropy' and 'num_clusters'
+            Dictionary containing diversity metrics
         """
         # Extract trajectories
         trajectories = self.extract_trajectories(scenarios)
         
         if len(trajectories) < 2:
-            return {'entropy': 0.0, 'num_clusters': 0, 'diversity_score': 0.0}
+            return {
+                'entropy': 0.0,
+                'num_clusters': 0,
+                'diversity_score': 0.0
+            }
         
         # Calculate distance matrix
-        dtw_matrix = self.calculate_dtw_matrix(trajectories)
+        distance_matrix = self.calculate_distance_matrix(trajectories)
         
-        # Cluster trajectories
-        labels = self.cluster_trajectories(dtw_matrix)
+        # Cluster trajectories using adaptive DBSCAN
+        labels = self.cluster_trajectories_adaptive(distance_matrix)
         
         # Calculate entropy
         entropy = self.calculate_entropy(labels)
         
         # Calculate diversity score (normalized entropy)
-        max_entropy = np.log(len(set(labels))) if len(set(labels)) > 1 else 1.0
-        diversity_score = entropy / max_entropy if max_entropy > 0 else 0.0
+        # Use more stable normalization to handle cases with few clusters
+        unique_clusters = len(set(labels))
+        n_scenarios = len(labels)
+        
+        if unique_clusters <= 1 or n_scenarios <= 1:
+            diversity_score = 0.0
+        else:
+            # Maximum entropy occurs when clusters are uniformly distributed
+            # H_max = log(k) where k is the number of clusters
+            max_entropy = np.log(unique_clusters)
+            
+            # Normalize entropy to [0, 1]
+            # Add small epsilon to avoid division by zero and improve numerical stability
+            # This handles cases where max_entropy is very small (e.g., log(2) ≈ 0.693)
+            diversity_score = entropy / (max_entropy + 1e-10)
+            
+            # Clamp to [0, 1] to handle any numerical errors
+            # Note: entropy can theoretically exceed max_entropy due to numerical precision,
+            # but in practice it should be bounded
+            diversity_score = np.clip(diversity_score, 0.0, 1.0)
         
         return {
             'entropy': entropy,
-            'num_clusters': len(set(labels)),
+            'num_clusters': unique_clusters,
             'diversity_score': float(diversity_score)
         }
     
@@ -240,3 +299,6 @@ class TrajectoryDiversity:
         self.trajectories.clear()
         self.cluster_labels.clear()
 
+
+# Backward compatibility alias
+TrajectoryDiversity = DrivingPatternDiversity

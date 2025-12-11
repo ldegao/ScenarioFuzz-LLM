@@ -18,6 +18,7 @@ import argparse
 from pathlib import Path
 
 from experiments.core.experiment_manager import ExperimentManager
+from experiments.core.utils import validate_output_directory
 
 
 METHOD_NAME = "RAG-ScenarioFuzz"
@@ -38,6 +39,11 @@ Examples:
 
   # Both limits: stop when either is reached
   python -m experiments.runners.run_rag_scenariofuzz --num-scenarios 100 --hours 2
+
+  # Continue existing experiment: generate 50 more scenarios
+  python -m experiments.runners.run_rag_scenariofuzz \\
+      --continue-experiment RAG-ScenarioFuzz_20251203_210023 \\
+      --continue-scenarios 50
 
   # Custom output root and target
   python -m experiments.runners.run_rag_scenariofuzz \\
@@ -106,6 +112,18 @@ Examples:
         default=None,
         help="Optional custom experiment ID (default: auto-generated).",
     )
+    parser.add_argument(
+        "--continue-experiment",
+        type=str,
+        default=None,
+        help="Continue an existing experiment by experiment ID. Use with --continue-scenarios to specify how many more scenarios to generate.",
+    )
+    parser.add_argument(
+        "--continue-scenarios",
+        type=int,
+        default=None,
+        help="Number of additional scenarios to generate when continuing an experiment (requires --continue-experiment).",
+    )
 
     return parser
 
@@ -115,8 +133,15 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.num_scenarios is None and args.hours is None:
-        parser.error("You must specify at least one of --num-scenarios or --hours.")
+    # Check if continuing an experiment
+    if args.continue_experiment:
+        if args.continue_scenarios is None or args.continue_scenarios <= 0:
+            parser.error("--continue-experiment requires --continue-scenarios with a positive number.")
+        if args.num_scenarios is not None or args.hours is not None:
+            parser.error("--continue-experiment cannot be used with --num-scenarios or --hours. Use --continue-scenarios instead.")
+    
+    if args.num_scenarios is None and args.hours is None and not args.continue_experiment:
+        parser.error("You must specify at least one of --num-scenarios, --hours, or --continue-experiment.")
 
     # Input validation
     if args.num_scenarios is not None:
@@ -131,32 +156,8 @@ def main() -> None:
         if args.hours > 720:  # 30 days max
             parser.error(f"--hours too large: {args.hours} (max: 720 hours = 30 days)")
     
-    # Validate output directory path
-    if args.output_root:
-        output_path = Path(args.output_root)
-        try:
-            # Check if parent directory exists and is writable
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            # Try to create a test file to verify write permissions
-            test_file = output_path.parent / ".write_test"
-            try:
-                test_file.touch()
-                test_file.unlink()
-            except (OSError, PermissionError) as e:
-                parser.error(f"Cannot write to output directory {args.output_root}: {e}")
-        except (OSError, PermissionError) as e:
-            parser.error(f"Invalid output directory path {args.output_root}: {e}")
-    
     # Validate output directory
-    output_path = Path(args.output_root)
-    try:
-        output_path.mkdir(parents=True, exist_ok=True)
-        # Test write permission
-        test_file = output_path / ".write_test"
-        test_file.touch()
-        test_file.unlink()
-    except (OSError, PermissionError) as e:
-        parser.error(f"Cannot write to output directory {args.output_root}: {e}")
+    validate_output_directory(args.output_root, parser)
 
     manager = ExperimentManager(output_base_dir=args.output_root)
 
@@ -170,8 +171,16 @@ def main() -> None:
         debug=args.debug,
     )
 
+    # Continue existing experiment
+    if args.continue_experiment:
+        manager.continue_experiment(
+            method_name=METHOD_NAME,
+            experiment_id=args.continue_experiment,
+            additional_scenarios=args.continue_scenarios,
+            **common_kwargs,
+        )
     # Only scenario count specified -> pure quantitative mode
-    if args.num_scenarios is not None and args.hours is None:
+    elif args.num_scenarios is not None and args.hours is None:
         manager.run_quantitative_experiment(
             method_name=METHOD_NAME,
             num_scenarios=args.num_scenarios,

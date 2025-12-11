@@ -400,7 +400,8 @@ class Scenario:
         error = self.check_error(self.state)
         # # reload scenario state
         # self.state = ScenarioState()
-        self.save_video(error, log_filename)
+        # 暂时注释掉视频保存代码以节约硬盘内存
+        # self.save_video(error, log_filename)
         # if self.state.trace_graph_important != []:
         #     self.save_trace(self.state.trace_graph_important, log_filename)
         if error:

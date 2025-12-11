@@ -18,6 +18,7 @@ import argparse
 from pathlib import Path
 
 from experiments.core.experiment_manager import ExperimentManager
+from experiments.core.utils import validate_output_directory
 
 
 METHOD_NAME = "TM-Fuzzer"
@@ -108,6 +109,10 @@ def main() -> None:
 
     if args.num_scenarios is None and args.hours is None:
         parser.error("You must specify at least one of --num-scenarios or --hours.")
+    
+    # Check if both are specified (not allowed for TM-Fuzzer)
+    if args.num_scenarios is not None and args.hours is not None:
+        parser.error("--num-scenarios and --hours cannot be used together. Please specify only one of them.")
 
     # Input validation
     if args.num_scenarios is not None:
@@ -122,32 +127,8 @@ def main() -> None:
         if args.hours > 720:  # 30 days max
             parser.error(f"--hours too large: {args.hours} (max: 720 hours = 30 days)")
     
-    # Validate output directory path
-    if args.output_root:
-        output_path = Path(args.output_root)
-        try:
-            # Check if parent directory exists and is writable
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            # Try to create a test file to verify write permissions
-            test_file = output_path.parent / ".write_test"
-            try:
-                test_file.touch()
-                test_file.unlink()
-            except (OSError, PermissionError) as e:
-                parser.error(f"Cannot write to output directory {args.output_root}: {e}")
-        except (OSError, PermissionError) as e:
-            parser.error(f"Invalid output directory path {args.output_root}: {e}")
-    
     # Validate output directory
-    output_path = Path(args.output_root)
-    try:
-        output_path.mkdir(parents=True, exist_ok=True)
-        # Test write permission
-        test_file = output_path / ".write_test"
-        test_file.touch()
-        test_file.unlink()
-    except (OSError, PermissionError) as e:
-        parser.error(f"Cannot write to output directory {args.output_root}: {e}")
+    validate_output_directory(args.output_root, parser)
 
     manager = ExperimentManager(output_base_dir=args.output_root)
 
@@ -168,10 +149,8 @@ def main() -> None:
             num_scenarios=args.num_scenarios,
             **common_kwargs,
         )
-    # Time specified (with or without num-scenarios) -> timed TM-Fuzzer wrapper.
-    # When both are provided, TM-Fuzzer will still be controlled by time only,
-    # since script/test.py does not support an explicit scenario bound.
-    else:
+    # Only time specified -> timed TM-Fuzzer wrapper
+    elif args.num_scenarios is None and args.hours is not None:
         manager.run_timed_experiment(
             method_name=METHOD_NAME,
             duration_hours=args.hours,

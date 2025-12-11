@@ -295,28 +295,29 @@ def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
         # save jpg files within the 10s before state.min_dist_frame
         move_images(conf, state)
         # save video in output_dir
-        if conf.agent_type == c.BEHAVIOR:
-            save_behavior_video(carla_error, state)
-        elif conf.agent_type == c.AUTOWARE:
-            save_behavior_video(carla_error, state)
-            os.system("rosnode kill /recorder_video_front")
-            time.sleep(1)
-            os.system("rosnode kill /recorder_video_top")
-            time.sleep(1)
-            # os.system("rosnode kill /recorder_bag")
-            # while os.path.exists(f"/tmp/fuzzerdata/{c.USERNAME}/bagfile.lz4.bag.active"):
-            #     print("waiting for rosbag to dump data")
-            #     time.sleep(1)
-            try:
-                autoware_container.kill()
-            except docker.errors.APIError as e:
-                print("[-] Couldn't kill Autoware container:", e)
-            except UnboundLocalError:
-                print("[-] Autoware container was not launched")
-            except:
-                print("[-] Autoware container was not killed for an unknown reason")
-                print("    Trying manually")
-                os.system("docker rm -f autoware-{}".format(os.getenv("USER")))
+        # 暂时注释掉视频保存代码以节约硬盘内存
+        # if conf.agent_type == c.BEHAVIOR:
+        #     save_behavior_video(carla_error, state)
+        # elif conf.agent_type == c.AUTOWARE:
+        #     save_behavior_video(carla_error, state)
+        #     os.system("rosnode kill /recorder_video_front")
+        #     time.sleep(1)
+        #     os.system("rosnode kill /recorder_video_top")
+        #     time.sleep(1)
+        #     os.system("rosnode kill /recorder_bag")
+        #     while os.path.exists(f"/tmp/fuzzerdata/{c.USERNAME}/bagfile.lz4.bag.active"):
+        #         print("waiting for rosbag to dump data")
+        #         time.sleep(1)
+        try:
+            autoware_container.kill()
+        except docker.errors.APIError as e:
+            print("[-] Couldn't kill Autoware container:", e)
+        except UnboundLocalError:
+            print("[-] Autoware container was not launched")
+        except:
+            print("[-] Autoware container was not killed for an unknown reason")
+            print("    Trying manually")
+            os.system("docker rm -f autoware-{}".format(os.getenv("USER")))
         # Finalize simulation
         if not is_carla_running():
             retval = -1
@@ -1243,13 +1244,17 @@ def spawn_npc(npc, npc_vehicle, npc_vehicles, npcs_now, agents_now, conf, max_wh
 
 
 def _on_front_camera_capture(image, state):
-    if not state.end:
-        image.save_to_disk(f"/tmp/fuzzerdata/{username}/front-{image.frame:05d}.jpg")
+    # 暂时注释掉图像保存代码以节约硬盘内存
+    # if not state.end:
+    #     image.save_to_disk(f"/tmp/fuzzerdata/{username}/front-{image.frame:05d}.jpg")
+    pass
 
 
 def _on_top_camera_capture(image, state):
-    if not state.end:
-        image.save_to_disk(f"/tmp/fuzzerdata/{username}/top-{image.frame:05d}.jpg")
+    # 暂时注释掉图像保存代码以节约硬盘内存
+    # if not state.end:
+    #     image.save_to_disk(f"/tmp/fuzzerdata/{username}/top-{image.frame:05d}.jpg")
+    pass
 
 
 def _set_camera(conf, player, spectator):
