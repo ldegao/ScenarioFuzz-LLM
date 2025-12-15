@@ -124,6 +124,7 @@ class Config:
         self.error_dir = None
         self.picture_dir = None
         self.queue_dir = None
+        self.recorder_dir = None
         self.debug = True
 
         # simulator config
@@ -180,10 +181,8 @@ class Config:
         self.use_reranking = True  # Enable reranking after retrieval
         self.reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder model for reranking
         
-        # Metrics configuration
-        self.enable_rag_metrics = False
-        self.metrics_output_dir = None
-        self.metrics_config_path = "./config/metrics_config.json"
+        # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
+        # This decouples data collection from metrics calculation
 
         # GPT / Scenario database configuration
         # By default we enable GPT-based evaluation; this can be disabled
@@ -201,6 +200,7 @@ class Config:
         self.time_record_dir = os.path.join(self.out_dir, "time_record")
         self.cam_dir = os.path.join(self.out_dir, "camera")
         self.rosbag_dir = os.path.join(self.out_dir, "rosbags")
+        self.recorder_dir = os.path.join(self.out_dir, "recorder")
 
     # def enqueue_seed_scenarios(self):
     #     try:

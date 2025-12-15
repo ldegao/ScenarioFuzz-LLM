@@ -217,6 +217,8 @@ def get_angle_between_vectors(vector1, vector2):
         return 0
     else:
         cos_angle = dot_product / magnitudes_product
+        # Clamp cos_angle to [-1, 1] to avoid math domain error due to floating point precision
+        cos_angle = max(-1.0, min(1.0, cos_angle))
         return math.degrees(math.acos(cos_angle))
 
 

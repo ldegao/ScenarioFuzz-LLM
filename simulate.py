@@ -119,6 +119,12 @@ def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
         if conf.agent_type == c.AUTOWARE:
             autoware_goal_publish(goal_loc, goal_rot, state, world)
 
+        # Start recorder before simulation begins
+        # Use container path /home/carla/recordings which is mapped to host recorder_dir via volume
+        # The volume mapping ensures files are saved to the correct location on the host
+        recorder_filename = "/home/carla/recordings/gid:{}_sid:{}.log".format(state.generation_id, state.scenario_id)
+        print("Recording on file: {}".format(client.start_recorder(recorder_filename, True)))
+
         # SIMULATION LOOP FOR AUTOWARE and BasicAgent
         signal.signal(signal.SIGALRM, utils.timeout_handler)
         signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -273,6 +279,13 @@ def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
             if conf.debug:
                 print("[debug] world reload fail")
             return retval, npc_list, state
+        # Stop recorder before reloading world
+        try:
+            print("Stop recording")
+            client.stop_recorder()
+        except Exception as e:
+            print("[-] Error stopping recorder: {}".format(e))
+        
         client.reload_world()
         # save npc json
         utils.write_json_cache_to_file(conf, state, json_cache)

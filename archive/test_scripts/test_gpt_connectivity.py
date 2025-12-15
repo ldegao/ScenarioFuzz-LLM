@@ -5,6 +5,7 @@
 """
 
 import sys
+import traceback
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -72,7 +73,6 @@ def test_gpt_connectivity():
         print("测试结果: 失败")
         print("=" * 60)
         print("错误信息: {}: {}".format(type(e).__name__, e))
-        import traceback
         traceback.print_exc()
         return False
 
@@ -111,7 +111,6 @@ def test_token_tracking():
         
     except Exception as e:
         print("Token 追踪功能测试失败: {}".format(e))
-        import traceback
         traceback.print_exc()
         return False
 

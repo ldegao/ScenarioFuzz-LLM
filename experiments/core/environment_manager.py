@@ -293,7 +293,8 @@ def save_files(project_root: Path):
     dirs_to_save = {
         "camera": output_dir / "camera",
         "errors": output_dir / "errors",
-        "time_record": output_dir / "time_record"
+        "time_record": output_dir / "time_record",
+        "recorder": output_dir / "recorder"
     }
     
     saved_anything = False

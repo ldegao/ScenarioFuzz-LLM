@@ -186,7 +186,7 @@ python -m experiments.aggregation.main
 
 ```json
 {
-  "ScenarioFuzz-LLM": [ { "pc": ..., "pec": ..., "tcd": ..., "bcm": ..., ... }, ... ],
+  "ScenarioFuzz-LLM": [ { "bpc": ..., "dbcc": ..., "dpd": ..., "bcm": ..., ... }, ... ],
   "RAG-ScenarioFuzz": [ ... ],
   "TM-Fuzzer":        [ ... ]
 }
@@ -223,8 +223,8 @@ python -m experiments.analysis.generate_figures \
 ```
 
 - 输出：
-  - `./reports/figs/pc_coverage.png`：PC 对比柱状图
-  - `./reports/figs/metrics_radar.png`：PC/PEC/TCD/BCM 雷达图
+  - `./reports/figs/bpc_coverage.png`：BPC 对比柱状图
+  - `./reports/figs/metrics_radar.png`：BPC/DBCC/DPD/BCM 雷达图
 
 #### 5.2 仅生成文本/JSON 报告
 

@@ -1,6 +1,8 @@
 import copy
 import pdb
 import random
+import traceback
+from typing import TYPE_CHECKING
 
 import config
 import constants as c
@@ -12,21 +14,24 @@ import carla
 
 import utils
 
+if TYPE_CHECKING:
+    # 类型检查时导入，避免运行时依赖
+    from carla import Waypoint, Actor, Location
 
 class NPC:
     npc_id: int
     npc_type: int
-    npc_bp_id = str
-    spawn_point = carla.Waypoint
+    npc_bp_id: str
+    spawn_point: 'carla.Waypoint'  # 使用字符串类型注解，延迟求值
     speed: int
     spawn_stuck_frame: int
-    instance: carla.Actor
-    ego_loc: carla.Location
+    instance: 'carla.Actor'  # 使用字符串类型注解
+    ego_loc: 'carla.Location'  # 使用字符串类型注解
     fresh: bool
     death_time: int
 
-    sensor_collision: carla.Actor
-    sensor_lane_invasion: carla.Actor
+    sensor_collision: 'carla.Actor'  # 使用字符串类型注解
+    sensor_lane_invasion: 'carla.Actor'  # 使用字符串类型注解
 
     def __init__(self, npc_type, spawn_point, npc_id=0, speed=0, ego_loc=None,
                  spawn_stuck_frame=0, npc_bp_id=None):
@@ -158,7 +163,6 @@ class NPC:
             except Exception as e:
                 # If any unexpected error occurs during serialization
                 print(f"[ERROR] Unexpected error serializing spawn_point: {e}")
-                import traceback
                 traceback.print_exc()
                 state['spawn_point'] = None
                 state['spawn_point_type'] = 'unknown'

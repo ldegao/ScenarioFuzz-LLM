@@ -214,6 +214,7 @@ def ini_hyperparameters(conf, args):
     os.makedirs(conf.rosbag_dir, exist_ok=True)
     os.makedirs(conf.cam_dir, exist_ok=True)
     os.makedirs(conf.npc_dir, exist_ok=True)
+    os.makedirs(conf.recorder_dir, exist_ok=True)
     os.makedirs(conf.time_record_dir, exist_ok=True)
     if args.no_lane_check:
         conf.check_dict["lane"] = False
@@ -239,10 +240,10 @@ def ini_hyperparameters(conf, args):
     # GPT / Scenario database configuration
     conf.scenario_db = args.scenario_db
     conf.gpt_log_dir = args.gpt_log_dir
-    # Scenario limit and RAG / metrics configuration (can be overridden by experiment manager)
+    # Scenario limit and RAG configuration (can be overridden by experiment manager)
     conf.max_scenarios = getattr(args, "max_scenarios", 0)
     conf.enable_rag = getattr(args, "enable_rag", False)
-    conf.enable_rag_metrics = getattr(args, "enable_rag_metrics", False)
+    # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
     # GPT-based evaluation configuration
     # Default is enabled; can be disabled via CLI or by callers overriding
     conf.enable_gpt_evaluation = not getattr(args, "disable_gpt", False)
@@ -313,8 +314,6 @@ def set_args():
                                  help="Maximum number of scenarios to evaluate in this run (0 = unlimited)")
     argument_parser.add_argument("--enable-rag", action="store_true",
                                  help="Enable RAG-based retrieval for prompt construction")
-    argument_parser.add_argument("--enable-rag-metrics", action="store_true",
-                                 help="Enable RAG-related coverage metrics")
     argument_parser.add_argument("--disable-gpt", action="store_true",
                                  help="Disable GPT-based evaluation and logging (non-GPT baseline)")
     argument_parser.add_argument("--allow-out-dir-exists", action="store_true",
@@ -611,7 +610,6 @@ def evaluation(ind: Scenario):
                 
             except Exception as e:
                 print(f"[Similarity] Error calculating similarity using {similarity_method} method: {e}")
-                import traceback
                 traceback.print_exc()
                 overall_similarity = 0
                 answer3_vehicle_info = {}
@@ -862,7 +860,6 @@ def evaluation(ind: Scenario):
                         )
                 except Exception as e:
                     print(f"[WARNING] Failed to log GPT conversation: {e}")
-                    import traceback
                     traceback.print_exc()
 
                 # Update Scenario_database (for backward compatibility and fallback)
@@ -953,61 +950,13 @@ def evaluation(ind: Scenario):
     if ind.found_error:
         print("[-]error detected. start a new cycle with a new seed")
     
-    # Calculate additional metrics if enabled
-    if conf and getattr(conf, "enable_rag_metrics", False):
-        try:
-            from metrics import ParameterCoverage, BehaviorCoverage, TrajectoryDiversity, BehaviorMatrix
-            
-            # Store metrics results in scenario for later aggregation
-            if not hasattr(ind, 'rag_metrics'):
-                ind.rag_metrics = {}
-            
-            # Parameter Coverage (PC)
-            pc_calculator = ParameterCoverage()
-            pc_score = pc_calculator.calculate_coverage([ind])
-            ind.rag_metrics['pc'] = pc_score
-            
-            # Behavior Coverage (PEC)
-            pec_calculator = BehaviorCoverage()
-            pec_score = pec_calculator.calculate_coverage([ind])
-            ind.rag_metrics['pec'] = pec_score
-            
-            # Trajectory Diversity (TCD)
-            tcd_calculator = TrajectoryDiversity()
-            tcd_results = tcd_calculator.calculate_coverage([ind])
-            ind.rag_metrics['tcd'] = tcd_results.get('diversity_score', 0.0)
-            
-            # Behavior Matrix Coverage (BCM)
-            bcm_calculator = BehaviorMatrix()
-            bcm_results = bcm_calculator.calculate_coverage([ind])
-            ind.rag_metrics['bcm'] = bcm_results.get('coverage_ratio', 0.0)
-
-            # Persist per-scenario metrics record for later aggregation
-            try:
-                metrics_dir = getattr(conf, "metrics_output_dir", None)
-                if not metrics_dir:
-                    base_out = getattr(conf, "out_dir", "./data/output")
-                    metrics_dir = os.path.join(base_out, "metrics")
-                os.makedirs(metrics_dir, exist_ok=True)
-
-                record = {
-                    "generation_id": getattr(ind, "generation_id", -1),
-                    "scenario_id": getattr(ind, "scenario_id", -1),
-                    "pc": float(ind.rag_metrics.get("pc", 0.0)),
-                    "pec": float(ind.rag_metrics.get("pec", 0.0)),
-                    "tcd": float(ind.rag_metrics.get("tcd", 0.0)),
-                    "bcm": float(ind.rag_metrics.get("bcm", 0.0)),
-                }
-                records_path = os.path.join(metrics_dir, "metrics_records.jsonl")
-                with open(records_path, "a", encoding="utf-8") as mf:
-                    mf.write(json.dumps(record, ensure_ascii=False) + "\n")
-            except Exception as metrics_io_err:
-                print(f"[Metrics] Warning: Failed to append metrics record: {metrics_io_err}")
-            
-        except ImportError as e:
-            print(f"[Metrics] Warning: Could not import metrics modules: {e}")
-        except Exception as e:
-            print(f"[Metrics] Warning: Error calculating metrics: {e}")
+    # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
+    # This decouples data collection from metrics calculation, allowing:
+    # - Offline recalculation of metrics
+    # - Different metrics calculation methods
+    # - Independent testing of metrics logic
+    # To calculate metrics, run:
+    #   python -m experiments.analysis.calculate_metrics --experiment-dir <experiment_dir>
     
     # For GPT-enabled runs we only exit the loop when a valid numeric
     # overall_similarity has been obtained. For GPT-disabled runs
@@ -1566,7 +1515,6 @@ def _save_checkpoint(checkpoint_path, curr_gen, total_scenarios_generated, popul
             
     except Exception as e:
         print(f"[WARNING] Failed to save checkpoint: {e}")
-        import traceback
         traceback.print_exc()
         # Don't raise - checkpoint save failure should not stop the experiment
 
@@ -1614,7 +1562,6 @@ def _load_checkpoint(checkpoint_path):
         return None
     except Exception as e:
         print(f"[WARNING] Failed to load checkpoint: {e}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -1963,7 +1910,6 @@ def main(args=None):
         except Exception as e:
             # Catch any other unexpected exceptions and continue
             print(f"[WARNING] Unexpected error in scenario {ind.scenario_id}: {e}. Using default fitness and continuing.")
-            import traceback
             traceback.print_exc()
             if not ind.fitness.valid:
                 ind.fitness.values = (0.0, 0.0, 0.0)  # Default fitness: (min_dist, nova, similarity)

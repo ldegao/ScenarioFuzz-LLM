@@ -18,11 +18,11 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 
 - **LLM-Guided Mutation**: ScenarioFuzz-LLM incorporates LLMs as expert agents to guide mutations when the genetic algorithm encounters stagnation, enhancing the diversity of testing scenarios.
 - **RAG-Enhanced Generation**: New RAG (Retrieval-Augmented Generation) module provides semantic search and context-aware scenario generation for improved diversity.
-- **Multi-Dimensional Evaluation**: Four new evaluation metrics (PC, PEC, TCD, BCM) provide comprehensive coverage assessment:
-  - **PC (Parameter Coverage)**: Parameter space combination coverage
-  - **PEC (Behavior Coverage)**: Physical behavior equivalence class coverage
-  - **TCD (Trajectory Diversity)**: Trajectory pattern diversity using DTW and entropy
-  - **BCM (Behavior Matrix)**: Behavior combination coverage
+- **Multi-Dimensional Evaluation**: Four evaluation metrics (BPC, DBCC, DPD, BCM) provide comprehensive coverage assessment based on industry standards:
+  - **BPC (Behavior Parameter Coverage)**: Behavior parameter space combination coverage with logarithmic normalization
+  - **DBCC (Driving Behavior Category Coverage)**: ISO 34502 behavior taxonomy coverage
+  - **DPD (Driving Pattern Diversity)**: Trajectory pattern diversity using Fréchet distance and stabilized entropy normalization
+  - **BCM (Behavior Matrix Coverage)**: Behavior combination coverage with logarithmic normalization
 - **Multi-Objective Optimization**: Evaluates scenarios based on metrics such as minimum vehicle distance, time-to-collision, and scenario variability to generate meaningful and diverse test cases.
 - **Broad Edge Case Coverage**: Allows the testing framework to explore a wide array of potential ADS failures by continuously adapting and evolving test scenarios.
 - **Integration with CARLA Simulator**: Provides a comprehensive testing setup for ADS simulation using CARLA, making ScenarioFuzz-LLM compatible with the Autoware.ai platform.
@@ -35,7 +35,7 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 This repository includes the following components:
 - **Core Fuzzing Engine**: The core GA-based scenario fuzzer and its CARLA integration (`fuzzer.py`, `scenario.py`, `states.py`, `config/`, `script/`).
 - **RAG Module**: Retrieval-augmented generation for semantic-enhanced scenario generation (`rag_module/`).
-- **Metrics Module**: Multi-dimensional evaluation metrics (PC, PEC, TCD, BCM) (`metrics/`).
+- **Metrics Module**: Multi-dimensional evaluation metrics (BPC, DBCC, DPD, BCM) based on industry standards (`metrics/`).
 - **Visualization Module**: Tools for generating charts and reports (`visualization/`).
 - **Experiments Package**: Reproducible paper experiments (ScenarioFuzz-LLM, RAG-ScenarioFuzz, TM-Fuzzer), with runners, progress tracking, aggregation and analysis (`experiments/`; see `experiments/docs/PAPER_EXPERIMENTS.md` and `experiments/docs/QUICK_START.md`).
 - **Pre-trained Models and Prompts**: Optimized prompts and models for guided scenario mutation and diversity evaluation.
@@ -53,11 +53,15 @@ For end-to-end experimental usage of RAG-ScenarioFuzz, see `experiments/docs/PAP
 
 ### Multi-Dimensional Evaluation Metrics
 
-Four new evaluation metrics provide comprehensive coverage assessment:
-- **Parameter Coverage (PC)**: Measures parameter space combination coverage
-- **Behavior Coverage (PEC)**: Evaluates physical behavior equivalence class coverage
-- **Trajectory Diversity (TCD)**: Measures trajectory pattern diversity using DTW
-- **Behavior Matrix Coverage (BCM)**: Evaluates behavior combination coverage
+Four evaluation metrics provide comprehensive coverage assessment based on industry standards and regulations:
+
+- **BPC (Behavior Parameter Coverage)**: Measures behavior parameter space combination coverage using logarithmic normalization. Based on ISO 15622, UNECE Reg.79, ISO 3888-1/2, ISO 7401, and EuroNCAP standards.
+
+- **DBCC (Driving Behavior Category Coverage)**: Evaluates coverage of ISO 34502 behavior taxonomy classes (11 standard behavior categories including car-following, lane changing, emergency braking, etc.).
+
+- **DPD (Driving Pattern Diversity)**: Measures trajectory pattern diversity using Fréchet distance with adaptive clustering and stabilized entropy normalization.
+
+- **BCM (Behavior Matrix Coverage)**: Evaluates behavior combination coverage using logarithmic normalization. Based on standard thresholds from UNECE R152, EuroNCAP, ISO 34502, and other regulations.
 
 These metrics are automatically collected and aggregated in the new experiment pipeline (see `experiments/PAPER_EXPERIMENTS.md` for details).
 
@@ -93,7 +97,6 @@ python -m experiments.runners.run_scenariofuzz_llm \
 For detailed usage instructions, see:
 - `CONTINUE_EXPERIMENT_GUIDE.md` - Complete guide for continuing experiments
 - `REPRODUCIBILITY_ANALYSIS.md` - Reproducibility analysis and best practices
-- `FIXES_MAX_SCENARIOS.md` - Technical details on improvements
 
 ## Getting Started
 
@@ -324,10 +327,10 @@ This experiment compares four different similarity scoring methods to determine 
 ### Evaluation Metrics
 
 The experiment evaluates each method using four diversity metrics:
-- **PC (Parameter Coverage)**: Parameter space combination coverage
-- **PEC (Behavior Coverage)**: Physical behavior equivalence class coverage
-- **TCD (Trajectory Diversity)**: Trajectory pattern diversity using DTW and entropy
-- **BCM (Behavior Matrix)**: Behavior combination coverage
+- **BPC (Behavior Parameter Coverage)**: Behavior parameter space combination coverage with logarithmic normalization
+- **DBCC (Driving Behavior Category Coverage)**: ISO 34502 behavior taxonomy coverage
+- **DPD (Driving Pattern Diversity)**: Trajectory pattern diversity using Fréchet distance and stabilized entropy normalization
+- **BCM (Behavior Matrix Coverage)**: Behavior combination coverage with logarithmic normalization
 
 ### Running the Comparison Experiment
 
@@ -403,7 +406,7 @@ This will generate:
 - **comparison_report.json**: Detailed metrics comparison in JSON format
 - **comparison_report.md**: Human-readable comparison report with tables
 - **comparison_figures/**: Visualization charts including:
-  - Bar charts for each metric (PC, PEC, TCD, BCM)
+  - Bar charts for each metric (BPC, DBCC, DPD, BCM)
   - Radar chart showing normalized comparison across all metrics
 
 ### Output Structure
@@ -429,8 +432,38 @@ experiment_results/
 
 - **Automatic RAG Initialization**: RAG is automatically enabled for all methods (required for embedding and hybrid methods)
 - **Consistent Configuration**: All methods use the same experimental parameters for fair comparison
-- **Comprehensive Metrics**: All four diversity metrics (PC, PEC, TCD, BCM) are automatically collected
+- **Comprehensive Metrics**: All four diversity metrics (BPC, DBCC, DPD, BCM) are automatically collected
 - **Detailed Analysis**: Comparison reports include mean, std, min, max, and run count for each metric
+
+## Evaluation Metrics
+
+The framework uses four standardized evaluation metrics based on industry standards and regulations:
+
+### BPC (Behavior Parameter Coverage)
+- **Purpose**: Measures coverage of behavior parameter combinations
+- **Normalization**: Logarithmic normalization (`log(1 + x) / log(1 + M)`)
+- **Standards**: Based on ISO 15622, UNECE Reg.79, ISO 3888-1/2, ISO 7401, EuroNCAP
+- **Parameters**: Longitudinal/lateral acceleration, jerk, yaw rate, TTC
+
+### DBCC (Driving Behavior Category Coverage)
+- **Purpose**: Measures coverage of ISO 34502 behavior taxonomy classes
+- **Normalization**: Linear (no normalization needed)
+- **Standards**: ISO 34502 behavior classification framework
+- **Categories**: 11 standard behavior classes (car-following, lane changing, emergency braking, etc.)
+
+### DPD (Driving Pattern Diversity)
+- **Purpose**: Measures trajectory pattern diversity
+- **Normalization**: Stabilized entropy normalization (`H / (H_max + ε)`)
+- **Method**: Fréchet distance with adaptive DBSCAN clustering
+- **Advantage**: More sensitive to physical trajectories than DTW
+
+### BCM (Behavior Matrix Coverage)
+- **Purpose**: Measures coverage of behavior combinations
+- **Normalization**: Logarithmic normalization (`log(1 + T) / log(1 + T_max)`)
+- **Standards**: Based on UNECE R152, EuroNCAP, ISO 34502 thresholds
+- **Behaviors**: 12 standard behavior types (emergency braking, lane changing, cut-in, etc.)
+
+For detailed metric definitions and normalization methods, see `behavior_metrics.md`.
 
 ## Data Availability
 

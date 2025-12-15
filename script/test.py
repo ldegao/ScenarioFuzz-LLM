@@ -5,6 +5,7 @@ import shutil
 import socket
 import subprocess
 import time
+import traceback
 from datetime import datetime
 from types import SimpleNamespace
 import sys
@@ -166,8 +167,16 @@ def run_carla(port=DEFAULT_SIM_PORT):
     carla_cmd = f"./CarlaUE4.sh -RenderOffScreen -carla-rpc-port={port} -quality-level=Epic && /bin/bash"
     docker_name = f"carla-{os.getlogin()}"
 
+    # Prepare recorder directory volume mapping
+    recorder_dir = os.path.join(OUTPUT_DIR, "recorder")
+    os.makedirs(recorder_dir, exist_ok=True)
+    # Set permissions to allow CARLA container to write recorder files
+    # CARLA runs as user 998 (carla), so we need to ensure the directory is writable
+    os.chmod(recorder_dir, 0o777)
+    recorder_volume = f"-v {recorder_dir}:/home/carla/recordings:rw"
+
     # Run CARLA Docker
-    command = f"docker run --name='carla-{os.getlogin()}' -d --gpus all --net=host -v /tmp/.X11-unix:/tmp/.X11-unix:rw carlasim/carla:0.9.13 {carla_cmd}"
+    command = f"docker run --name='carla-{os.getlogin()}' -d --gpus all --net=host -v /tmp/.X11-unix:/tmp/.X11-unix:rw {recorder_volume} carlasim/carla:0.9.13 {carla_cmd}"
     # command = f"docker run --name='carla-{os.getlogin()}' -d --gpus --net=host -v /tmp/.X11-unix:/tmp/.X11-unix:rw carlasim/carla:0.9.13 {carla_cmd}"
     # run_command(command)
     subprocess.Popen(command, shell=True)
@@ -193,6 +202,7 @@ def save_files():
     os.makedirs(save_dir, exist_ok=True)
 
     # Iterate over all items (files and directories) in output_dir
+    # This includes recorder directory which contains CARLA recorder log files
     for item in os.listdir(output_dir):
         item_path = os.path.join(output_dir, item)
         target_path = os.path.join(save_dir, item)
@@ -306,7 +316,6 @@ def run_test(sim_port, target, density, town, duration, max_failures=3):
             raise  # Re-raise TimeoutError
         except Exception as e:
             print(f"Unexpected exception: {e}")
-            import traceback
             traceback.print_exc()
             failure_count += 1
             if failure_count >= max_failures:

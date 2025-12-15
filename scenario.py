@@ -2,6 +2,7 @@ import cProfile
 import json
 import os
 import pdb
+import pickle
 import shutil
 from typing import List
 
@@ -322,22 +323,147 @@ class Scenario:
             "wait_autoware_num_topics": c.WAIT_AUTOWARE_NUM_NODES
         }
 
-        # state_dict = {"fuzzing_start_time": self.conf.cur_time, "determ_seed": self.conf.determ_seed,
-        #               "seed": self.seed_data, "weather": self.weather, "autoware_cmd": state.autoware_cmd,
-        #               "autoware_goal": state.autoware_goal, "first_frame_id": state.first_frame_id,
-        #               "first_sim_elapsed_time": state.first_sim_elapsed_time, "sim_start_time": state.sim_start_time,
-        #               "num_frames": state.num_frames, "elapsed_time": state.elapsed_time, "events": event_dict,
-        #               "config": config_dict}
+        # Serialize complete state data for metrics calculation
+        # Exclude non-serializable CARLA objects (client, world, G, etc.)
+        state_data = {
+            # Execution metadata
+            "first_frame_id": state.first_frame_id,
+            "first_sim_elapsed_time": state.first_sim_elapsed_time,
+            "sim_start_time": state.sim_start_time,
+            "num_frames": state.num_frames,
+            "elapsed_time": state.elapsed_time,
+            "distance": state.distance,
+            
+            # Error states (also in events, but kept for completeness)
+            "crashed": state.crashed,
+            "collision_to": state.collision_to.id if hasattr(state.collision_to, 'id') else state.collision_to,
+            "stuck": state.stuck,
+            "stuck_duration": state.stuck_duration,
+            "laneinvaded": state.laneinvaded,
+            "speeding": state.speeding,
+            "red_violation": state.red_violation,
+            "on_red": state.on_red,
+            "other_error": state.other_error,
+            "other_error_val": state.other_error_val,
+            "signal": state.signal,
+            
+            # Speed and position data (critical for metrics)
+            "speed": state.speed,
+            "speed_lim": state.speed_lim,
+            "on_red_speed": state.on_red_speed,
+            
+            # Orientation and movement data (critical for metrics)
+            "yaw_list": state.yaw_list,
+            "yaw_rate_list": state.yaw_rate_list,
+            "steer_angle_list": state.steer_angle_list,
+            
+            # Velocity components (critical for trajectory diversity)
+            "lon_speed_list": state.lon_speed_list,
+            "lat_speed_list": state.lat_speed_list,
+            
+            # Control inputs
+            "cont_throttle": state.cont_throttle,
+            "cont_brake": state.cont_brake,
+            "cont_steer": state.cont_steer,
+            
+            # Distance metrics (critical for metrics)
+            "min_dist": state.min_dist,
+            "min_dist_frame": getattr(state, 'min_dist_frame', None),
+            
+            # Autoware specific (if applicable)
+            "autoware_cmd": state.autoware_cmd,
+            "autoware_universe_cmd": state.autoware_universe_cmd,
+            "autoware_goal": state.autoware_goal,
+            
+            # Other metadata
+            "mutation": state.mutation,
+            "spawn_failed": state.spawn_failed,
+            "end": state.end,
+            
+            # Convert set to list for JSON serialization
+            "drawn_points": list(state.drawn_points) if isinstance(state.drawn_points, set) else state.drawn_points,
+        }
+        
+        # Clean laneinvasion_event - only keep serializable data
+        if hasattr(state, 'laneinvasion_event') and state.laneinvasion_event:
+            state_data["laneinvasion_event"] = [
+                {
+                    'frame': getattr(e, 'frame', None),
+                    'timestamp': getattr(e, 'timestamp', None)
+                } if hasattr(e, 'frame') else None
+                for e in state.laneinvasion_event
+            ]
+        else:
+            state_data["laneinvasion_event"] = []
+        
+        # Clean closest_cars_list - only keep serializable data
+        if hasattr(state, 'closest_cars_list') and state.closest_cars_list:
+            cleaned_cars = []
+            for car in state.closest_cars_list:
+                if isinstance(car, dict):
+                    cleaned_cars.append(car)
+                elif hasattr(car, 'id'):
+                    try:
+                        transform = car.get_transform()
+                        cleaned_cars.append({
+                            'id': car.id,
+                            'type_id': getattr(car, 'type_id', 'unknown'),
+                            'location': (transform.location.x, transform.location.y, transform.location.z),
+                            'rotation': (transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll)
+                        })
+                    except Exception:
+                        cleaned_cars.append({'id': car.id})
+                else:
+                    try:
+                        cleaned_cars.append(str(car))
+                    except Exception:
+                        pass
+            state_data["closest_cars_list"] = cleaned_cars
+        else:
+            state_data["closest_cars_list"] = []
 
-        state_dict = {"events": event_dict, "config": config_dict}
+        state_dict = {
+            "events": event_dict,
+            "config": config_dict,
+            "state": state_data  # Add complete state data
+        }
         filename = "gid:{}_sid:{}.json".format(self.generation_id, self.scenario_id)
         if log_type == "queue":
             out_dir = self.conf.queue_dir
-        with open(os.path.join(out_dir, filename), "w") as fp:
-            json.dump(state_dict, fp)
+        with open(os.path.join(out_dir, filename), "w", encoding='utf-8') as fp:
+            json.dump(state_dict, fp, ensure_ascii=False, indent=2)
         if self.conf.debug:
             print("[debug] dumped")
         return filename
+
+    def save_scenario_pickle(self, log_type="queue"):
+        """
+        Save complete Scenario object (including state) as pickle file.
+        This preserves all data including non-serializable CARLA objects references
+        (which will be restored on load via __setstate__).
+        
+        Args:
+            log_type: Type of log (e.g., "queue")
+            
+        Returns:
+            Filename of saved pickle file
+        """
+        filename = "gid:{}_sid:{}.pkl".format(self.generation_id, self.scenario_id)
+        if log_type == "queue":
+            out_dir = self.conf.queue_dir
+        else:
+            out_dir = self.conf.out_dir
+        
+        pickle_path = os.path.join(out_dir, filename)
+        try:
+            with open(pickle_path, "wb") as fp:
+                pickle.dump(self, fp)
+            if self.conf.debug:
+                print(f"[debug] saved scenario pickle: {filename}")
+            return filename
+        except Exception as e:
+            print(f"[WARNING] Failed to save scenario pickle {filename}: {e}")
+            return None
 
     def run_test(self, exec_state):
         # Ensure conf is not None - restore from globals if needed
@@ -397,6 +523,8 @@ class Scenario:
                 return 128
         log_filename = self.dump_states(self.state, log_type="queue")
         self.log_filename = log_filename
+        # Also save complete scenario as pickle for full data preservation
+        pickle_filename = self.save_scenario_pickle(log_type="queue")
         error = self.check_error(self.state)
         # # reload scenario state
         # self.state = ScenarioState()

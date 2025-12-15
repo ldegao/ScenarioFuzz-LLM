@@ -125,7 +125,7 @@ python -m experiments.runners.run_rag_scenariofuzz \
   --debug
 ```
 
-### 6. 指标聚合与可视化（PC / PEC / TCD / BCM）
+### 6. 指标聚合与可视化（BPC / DBCC / DPD / BCM）
 
 运行完各方法的实验后，可以按如下步骤做统一聚合与绘图：
 
@@ -138,7 +138,7 @@ python -m experiments.aggregation.main \
   --root experiment_results \
   --output experiment_results/all_methods_results.json
 
-# 2) 生成 PC/PEC/TCD/BCM 图像和综合雷达图
+# 2) 生成 BPC/DBCC/DPD/BCM 图像和综合雷达图
 python -m experiments.analysis.generate_figures \
   --results-file experiment_results/all_methods_results.json \
   --output-dir reports/figs

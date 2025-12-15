@@ -175,16 +175,16 @@ class ExperimentManager:
             # Method-specific configuration
             if method_name == "RAG-ScenarioFuzz":
                 conf.enable_rag = True
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
                 conf.rag_k = kwargs.get('rag_k', 5)
             elif method_name == "ScenarioFuzz-LLM":
                 conf.enable_rag = False
                 # Still enable metrics for non-RAG ScenarioFuzz-LLM
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
             elif method_name == "SimilarityComparison":
                 # SimilarityComparison: always enable RAG (needed for embedding/hybrid methods)
                 conf.enable_rag = True
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
                 conf.rag_k = kwargs.get('rag_k', 5)
                 # Configure similarity scoring method
                 similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
@@ -241,6 +241,11 @@ class ExperimentManager:
             except Exception as token_error:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
+            # Copy recorder files from data/output/recorder to experiment directory before archiving
+            # This is needed because Docker volume maps to data/output/recorder,
+            # but experiment outputs are in experiment_results/.../
+            self._copy_recorder_files_to_experiment_dir(method_dir)
+            
             # Archive all artifacts for this run (results + metadata) for reproducibility
             # Only archive if experiment completed successfully (not interrupted)
             # Check if experiment was interrupted by checking if we reached the target
@@ -301,6 +306,7 @@ class ExperimentManager:
         args = self._create_args(method_name, method_dir, **kwargs)
         
         start_time = time.time()
+        experiment_start_time = start_time  # Record experiment start time for recorder file filtering
         
         try:
             # Method-specific configuration
@@ -337,16 +343,16 @@ class ExperimentManager:
             # Method-specific configuration
             if method_name == "RAG-ScenarioFuzz":
                 conf.enable_rag = True
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
                 conf.rag_k = kwargs.get('rag_k', 5)
             elif method_name == "ScenarioFuzz-LLM":
                 conf.enable_rag = False
                 # Still enable metrics for non-RAG ScenarioFuzz-LLM
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
             elif method_name == "SimilarityComparison":
                 # SimilarityComparison: always enable RAG (needed for embedding/hybrid methods)
                 conf.enable_rag = True
-                conf.enable_rag_metrics = True
+                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
                 conf.rag_k = kwargs.get('rag_k', 5)
                 # Configure similarity scoring method
                 similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
@@ -364,7 +370,6 @@ class ExperimentManager:
             # uncomment and update the following:
             # elif method_name == "DriveFuzz":
             #     conf.enable_rag = False
-            #     conf.enable_rag_metrics = False
             
             # Set timeout in config for fuzzer to check
             conf.experiment_timeout = duration_seconds
@@ -457,6 +462,9 @@ class ExperimentManager:
             except Exception as token_error:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
+            # Copy recorder files from data/output/recorder to experiment directory before archiving
+            self._copy_recorder_files_to_experiment_dir(method_dir)
+            
             # Archive artifacts for timed run as well
             # Only archive if experiment completed successfully
             try:
@@ -486,8 +494,9 @@ class ExperimentManager:
             '--max-scenarios', str(kwargs.get('max_scenarios', 0)),
             '--allow-out-dir-exists',
         ]
-        # Always enable multi-dimensional metrics for experiments
-        args_list.append('--enable-rag-metrics')
+        
+        # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
+        # Metrics are now calculated offline after experiment completion
         
         # Enable RAG flags for RAG-ScenarioFuzz and SimilarityComparison methods
         if method_name == "RAG-ScenarioFuzz" or method_name == "SimilarityComparison":
@@ -555,6 +564,10 @@ class ExperimentManager:
             if output_dir:
                 existing_scenarios = self._count_scenarios(output_dir)
                 print(f"[INFO] Existing scenarios in {output_dir}: {existing_scenarios}")
+                
+                # Copy recorder files from data/output/recorder to experiment directory
+                # This ensures recorder files are copied even if experiment was interrupted
+                self._copy_recorder_files_to_experiment_dir(output_dir)
             else:
                 existing_scenarios = 0
                 print(f"[WARNING] No output directory specified, cannot count scenarios")
@@ -638,6 +651,10 @@ class ExperimentManager:
                 try:
                     fuzzer.main(args)
                     print(f"[INFO] fuzzer.main() completed successfully")
+                    
+                    # Copy recorder files after successful fuzzer run
+                    if output_dir:
+                        self._copy_recorder_files_to_experiment_dir(output_dir)
                 except RuntimeError as runtime_err:
                     # Check if this is a CARLA connection/timeout error
                     msg = str(runtime_err)
@@ -647,6 +664,8 @@ class ExperimentManager:
                         if output_dir:
                             completed_after_error = self._count_scenarios(output_dir)
                             print(f"[INFO] Scenarios after fuzzer error: {completed_after_error}/{max_scenarios}")
+                            # Copy recorder files even if there was an error (they may have been generated)
+                            self._copy_recorder_files_to_experiment_dir(output_dir)
                             if completed_after_error > existing_scenarios:
                                 print(f"[INFO] Made progress: {completed_after_error - existing_scenarios} new scenarios")
                                 # Made progress, but still need to handle the error
@@ -661,12 +680,13 @@ class ExperimentManager:
                     else:
                         # Other RuntimeError (e.g., AttributeError from mutation)
                         print(f"[WARNING] fuzzer.main() raised RuntimeError: {runtime_err}")
-                        import traceback
                         traceback.print_exc()
                         # Count scenarios to see if we made any progress
                         if output_dir:
                             completed_after_error = self._count_scenarios(output_dir)
                             print(f"[INFO] Scenarios after fuzzer error: {completed_after_error}/{max_scenarios}")
+                            # Copy recorder files even if there was an error (they may have been generated)
+                            self._copy_recorder_files_to_experiment_dir(output_dir)
                             if completed_after_error > existing_scenarios:
                                 print(f"[INFO] Made progress: {completed_after_error - existing_scenarios} new scenarios")
                                 # Made progress, but error occurred - re-raise to trigger retry
@@ -679,12 +699,13 @@ class ExperimentManager:
                 except Exception as fuzzer_error:
                     # If fuzzer fails, check if we've made progress
                     print(f"[WARNING] fuzzer.main() raised exception: {fuzzer_error}")
-                    import traceback
                     traceback.print_exc()
                     # Count scenarios to see if we made any progress
                     if output_dir:
                         completed_after_error = self._count_scenarios(output_dir)
                         print(f"[INFO] Scenarios after fuzzer error: {completed_after_error}/{max_scenarios}")
+                        # Copy recorder files even if there was an error (they may have been generated)
+                        self._copy_recorder_files_to_experiment_dir(output_dir)
                         # If we made progress, continue; otherwise treat as connection error
                         if completed_after_error > existing_scenarios:
                             # Made some progress, continue to check completion
@@ -703,6 +724,8 @@ class ExperimentManager:
                 if output_dir:
                     completed = self._count_scenarios(output_dir)
                     print(f"[INFO] Scenarios in output directory: {completed}")
+                    # Copy recorder files after checking completion (in case of successful completion)
+                    self._copy_recorder_files_to_experiment_dir(output_dir)
                 else:
                     # Fallback to global variable
                     try:
@@ -973,6 +996,102 @@ class ExperimentManager:
             except Exception as archive_error:
                 print(f"[WARNING] Failed to archive experiment run {experiment_id}: {archive_error}")
     
+    def _copy_recorder_files_to_experiment_dir(self, method_dir: Path):
+        """
+        Copy recorder files from data/output/recorder to experiment directory.
+        
+        This is needed because Docker volume maps to data/output/recorder,
+        but experiment outputs are in experiment_results/.../
+        
+        Strategy:
+        1. If recorder directory already has files, skip (already copied)
+        2. Otherwise, match recorder files to scenario files by gid/sid
+        3. Copy matched recorder files to experiment directory
+        
+        Args:
+            method_dir: Path to experiment method directory
+        """
+        try:
+            if not method_dir.exists():
+                return
+            
+            data_recorder_dir = PROJECT_ROOT / "data" / "output" / "recorder"
+            experiment_recorder_dir = method_dir / "recorder"
+            queue_dir = method_dir / "queue"
+            
+            # Create experiment recorder directory if it doesn't exist
+            experiment_recorder_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Check if recorder directory already has files
+            existing_recorder_files = list(experiment_recorder_dir.glob("*.log"))
+            if existing_recorder_files:
+                print(f"[INFO] Recorder directory already has {len(existing_recorder_files)} file(s), skipping copy")
+                return
+            
+            # Get scenario files to match recorder files
+            scenario_files = []
+            if queue_dir.exists():
+                scenario_files = list(queue_dir.glob("*.json"))
+            
+            if not scenario_files:
+                print(f"[INFO] No scenario files found in {queue_dir}, cannot match recorder files")
+                return
+            
+            # Extract gid/sid from scenario filenames
+            # Format: gid_X_sid_Y.json or similar
+            scenario_ids = set()
+            for scenario_file in scenario_files:
+                # Try to extract gid and sid from filename
+                name = scenario_file.stem  # without .json extension
+                # Common formats: gid_1_sid_106, gid:1_sid:106, etc.
+                import re
+                match = re.search(r'gid[:_](\d+)[^0-9]*sid[:_](\d+)', name)
+                if match:
+                    gid, sid = match.groups()
+                    scenario_ids.add((int(gid), int(sid)))
+            
+            if not scenario_ids:
+                print(f"[WARNING] Could not extract gid/sid from scenario filenames, trying to copy all recorder files")
+                # Fallback: copy all recorder files if we can't match
+                if data_recorder_dir.exists() and data_recorder_dir.is_dir():
+                    recorder_files = list(data_recorder_dir.glob("*.log"))
+                    if recorder_files:
+                        copied_count = 0
+                        for recorder_file in recorder_files:
+                            target_file = experiment_recorder_dir / recorder_file.name
+                            if not target_file.exists():
+                                shutil.copy2(str(recorder_file), str(target_file))
+                                copied_count += 1
+                        if copied_count > 0:
+                            print(f"[INFO] Copied {copied_count} recorder file(s) from {data_recorder_dir} to {experiment_recorder_dir}")
+                return
+            
+            # Match and copy recorder files based on scenario gid/sid
+            if data_recorder_dir.exists() and data_recorder_dir.is_dir():
+                recorder_files = list(data_recorder_dir.glob("*.log"))
+                if recorder_files:
+                    copied_count = 0
+                    for recorder_file in recorder_files:
+                        # Extract gid/sid from recorder filename: gid:X_sid:Y.log
+                        name = recorder_file.stem
+                        match = re.search(r'gid[:_](\d+)[^0-9]*sid[:_](\d+)', name)
+                        if match:
+                            gid, sid = match.groups()
+                            if (int(gid), int(sid)) in scenario_ids:
+                                target_file = experiment_recorder_dir / recorder_file.name
+                                if not target_file.exists():
+                                    shutil.copy2(str(recorder_file), str(target_file))
+                                    copied_count += 1
+                    
+                    if copied_count > 0:
+                        print(f"[INFO] Copied {copied_count} matched recorder file(s) from {data_recorder_dir} to {experiment_recorder_dir}")
+                    else:
+                        print(f"[INFO] No matching recorder files found for {len(scenario_ids)} scenario(s)")
+        except Exception as recorder_copy_error:
+            print(f"[WARNING] Failed to copy recorder files to experiment directory: {recorder_copy_error}")
+            import traceback
+            traceback.print_exc()
+    
     def _archive_experiment_run(self, method_name: str, experiment_id: str, method_dir: Path):
         """
         Archive all artifacts for a single experiment run into a unified snapshot directory.
@@ -1000,30 +1119,68 @@ class ExperimentManager:
         archive_dir.mkdir(parents=True, exist_ok=True)
         
         # 1) Copy per-experiment results
+        # This includes all subdirectories under method_dir, including:
+        # - queue/ (scenario files)
+        # - metrics/ (metrics records)
+        # - recorder/ (CARLA recorder log files)
         if method_dir.exists():
+            # Ensure recorder files are copied before archiving
+            # This handles the case where recorder files weren't copied during experiment run
+            self._copy_recorder_files_to_experiment_dir(method_dir)
+            
             target_results = archive_dir / "results"
             shutil.copytree(str(method_dir), str(target_results))
             print(f"[INFO] Archived results to {target_results}")
+            
+            # Verify recorder directory was archived
+            recorder_source = method_dir / "recorder"
+            recorder_target = target_results / "recorder"
+            if recorder_source.exists() and recorder_target.exists():
+                recorder_files = list(recorder_source.glob("*.log"))
+                if recorder_files:
+                    print(f"[INFO] Archived {len(recorder_files)} recorder log file(s) to {recorder_target}")
+                else:
+                    print(f"[WARNING] Recorder directory exists but contains no .log files")
 
-            # 1b) Aggregate metrics for this run if metrics_records.jsonl exists
+            # 1b) Calculate metrics from scenario data (optional, can be done offline)
+            # Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
+            # This allows offline recalculation and decouples data collection from metrics calculation
+            # To calculate metrics, run:
+            #   python -m experiments.analysis.calculate_metrics --experiment-dir <method_dir>
+            # 
+            # Optionally, we can call it here automatically:
             try:
+                from experiments.analysis.calculate_metrics import calculate_metrics_from_scenarios
                 metrics_dir = method_dir / "metrics"
+                # Only calculate if metrics don't already exist (to avoid overwriting)
                 records_path = metrics_dir / "metrics_records.jsonl"
-                if records_path.exists():
-                    records = load_records_from_jsonl(str(records_path))
-                    summary = aggregate_run_metrics(records)
-                    # Use the number of records as a fallback for num_scenarios
-                    num_scenarios = summary.get("num_records", len(records))
-                    summary_path = metrics_dir / "metrics_summary.json"
-                    save_run_summary(
-                        summary,
-                        str(summary_path),
-                        method_name=method_name,
-                        experiment_id=experiment_id,
-                        num_scenarios=num_scenarios,
+                if not records_path.exists():
+                    print(f"[ExperimentManager] Calculating metrics for {experiment_id}...")
+                    calculate_metrics_from_scenarios(
+                        experiment_dir=method_dir,
+                        output_dir=metrics_dir,
+                        incremental=False,
+                        recalculate=False
                     )
+                else:
+                    # Aggregate existing metrics if they exist
+                    records = load_records_from_jsonl(str(records_path))
+                    if records:
+                        summary = aggregate_run_metrics(records)
+                        num_scenarios = summary.get("num_records", len(records))
+                        summary_path = metrics_dir / "metrics_summary.json"
+                        save_run_summary(
+                            summary,
+                            str(summary_path),
+                            method_name=method_name,
+                            experiment_id=experiment_id,
+                            num_scenarios=num_scenarios,
+                        )
+            except ImportError:
+                # calculate_metrics module not available, skip
+                print(f"[ExperimentManager] Metrics calculation module not available, skipping for {experiment_id}")
             except Exception as metrics_err:
-                print(f"[WARNING] Failed to aggregate metrics for run {experiment_id}: {metrics_err}")
+                print(f"[WARNING] Failed to calculate/aggregate metrics for run {experiment_id}: {metrics_err}")
         
         # 2) Copy scenario database (global) if present
         scenario_db = project_root / "data" / "scenario_db.json"
