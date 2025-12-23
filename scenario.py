@@ -57,7 +57,8 @@ class ScenarioFitness(deap.base.Fitness):
 class Scenario:
     generation_id: int = -1
     scenario_id: int = -1
-    fitness: deap.base.Fitness = ScenarioFitness()
+    # NOTE: fitness must be instance-specific; initialized in __init__
+    fitness: deap.base.Fitness
     seed_data = {}
     town = None
     weather = {}
@@ -75,6 +76,8 @@ class Scenario:
         self.conf = conf
         self.seed_data = seed_data
         self.state = ScenarioState()
+        # Ensure each Scenario has its own fitness object (avoid class-level sharing)
+        self.fitness = ScenarioFitness()
 
         self.weather["cloud"] = 0
         self.weather["rain"] = 0
@@ -298,6 +301,18 @@ class Scenario:
             except (AttributeError, ImportError) as e:
                 # exec_state not available yet, will be set later
                 pass
+
+        # Ensure fitness is instance-specific after unpickling to avoid shared state
+        fitness_obj = getattr(self, 'fitness', None)
+        # If fitness is missing, not the correct type, or came from class attribute (not in __dict__)
+        if not isinstance(fitness_obj, ScenarioFitness) or 'fitness' not in self.__dict__:
+            self.fitness = ScenarioFitness()
+        else:
+            # Detach any potential shared reference by round-tripping through pickle
+            try:
+                self.fitness = pickle.loads(pickle.dumps(self.fitness))
+            except Exception:
+                self.fitness = ScenarioFitness()
 
     def get_distance_from_player(self, location):
         sp = get_seed_sp_transform(self.seed_data)
@@ -561,6 +576,15 @@ class Scenario:
         self.state.red_violation = False
         self.state.other_error = False
         self.state.other_error_val = 0
+        # Reset kinematic logs to avoid leaking previous runs
+        self.state.cont_throttle = []
+        self.state.cont_brake = []
+        self.state.cont_steer = []
+        self.state.steer_angle_list = []
+        self.state.yaw_list = []
+        self.state.yaw_rate_list = []
+        self.state.lat_speed_list = []
+        self.state.lon_speed_list = []
 
     def save_video(self, error, log_filename):
         try:

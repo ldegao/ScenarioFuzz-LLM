@@ -346,4 +346,75 @@ experiments/docs/             # 当前文档（Quick Start、Paper Experiments�
    - 表格/图 3.x：来自 `./reports/figs/*.png`
    - 文字总结：来自 `./reports/*.md` 与 `./reports/*.json`
 
+---
+
+### 9. 实验 3：局部变异多样性对比（GPT 指导 vs 随机）
+
+该实验聚焦“同一初始种子附近”的变异行为，引入新的局部多样性指标（不与 BPC / DBCC / DPD / BCM 重复）：
+
+- **LMS**（Local Mutation Spread）：同 seed 的变异样本成对距离均值。
+- **SED**（Seed Expansion Distance）：变异样本相对 seed 代表的平均偏移。
+- **OSCR**（Over-Seed Coverage Rate）：变异样本超出 seed 典型半径 τ 的比例。
+
+**实验说明**：
+
+前两组实验关注全局分布，这里我们在固定 seed 条件下专门分析局部变异行为，因此设计了一组新的局部多样性指标。
+
+**一键运行脚本（推荐）**：
+
+```bash
+bash experiments/scripts/run_local_diversity_comparison.sh \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --determ-seed 42.0
+```
+
+该脚本会自动：
+1. 运行 GPT 指导变异实验（ScenarioFuzz-LLM，默认配置）
+2. 运行随机变异实验（ScenarioFuzz-LLM + `--disable-guided-mutation`）
+3. 使用相同的随机种子（`--determ-seed`）确保两组实验使用相同的初始种子集合
+4. 自动调用对比脚本生成对比结果 JSON
+
+**手动运行（分步执行）**：
+
+如果需要分步执行或使用已有的实验数据：
+
+```bash
+# 步骤 1: 运行 GPT 指导变异实验
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --num-scenarios 1000 \
+  --determ-seed 42.0 \
+  --target behavior \
+  --town 3 \
+  --timeout 60
+
+# 步骤 2: 运行随机变异实验（使用相同的随机种子）
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --num-scenarios 1000 \
+  --determ-seed 42.0 \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --disable-guided-mutation
+
+# 步骤 3: 对比局部多样性指标
+python -m experiments.runners.run_local_diversity_comparison \
+  --gpt-dir ./experiment_results/ScenarioFuzz-LLM/<gpt_experiment_id> \
+  --rand-dir ./experiment_results/ScenarioFuzz-LLM/<random_experiment_id> \
+  --output ./experiment_results/local_diversity_comparison.json
+```
+
+**输出说明**：
+
+- 对比结果 JSON 包含：
+  - `gpt`: GPT 指导变异的 LMS/SED/OSCR 指标
+  - `random`: 随机变异的 LMS/SED/OSCR 指标
+  - `delta_lms/sed/oscr`: 两组指标的差值
+- 若需先写入单次运行的新指标，可执行 `python -m experiments.analysis.calculate_metrics --experiment-dir <dir>`，生成的 `metrics/metrics_summary.json` 将附带 LMS/SED/OSCR。
+
 

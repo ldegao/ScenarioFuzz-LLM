@@ -24,6 +24,13 @@ import config
 import fuzzer
 from experiments.core.progress_tracker import ProgressTracker
 from experiments.core.time_estimator import TimeEstimator
+from experiments.core.path_utils import (
+    DEFAULT_RUN_ROOT,
+    ensure_run_layout,
+    snapshot_args,
+    snapshot_config_file,
+    reorganize_legacy_files,
+)
 from experiments.runners.tmfuzzer.baseline import (
     run_tmfuzzer_quantitative,
     run_tmfuzzer_timed,
@@ -47,7 +54,7 @@ class ExperimentManager:
     Manages experiment execution with progress tracking
     """
     
-    def __init__(self, output_base_dir: str = "./experiment_results"):
+    def __init__(self, output_base_dir: str = str(DEFAULT_RUN_ROOT)):
         """
         Initialize experiment manager
         
@@ -128,11 +135,23 @@ class ExperimentManager:
         
         # Create fresh directory
         method_dir.mkdir(parents=True, exist_ok=True)
+        run_paths = ensure_run_layout(method_dir)
         print(f"[INFO] Created fresh experiment directory: {method_dir}")
+        
+        # Clean scenario database before run (unified for all methods)
+        # This ensures a clean start for each experiment
+        scenario_db_path = PROJECT_ROOT / "data" / "scenario_db.json"
+        if scenario_db_path.exists():
+            scenario_db_path.unlink()
+            print(f"[INFO] 清空 RAG 场景库：{scenario_db_path}")
+        else:
+            print(f"[INFO] RAG 场景库为空：{scenario_db_path}")
         
         # Configure
         # Pass max_scenarios via args so that fuzzer can enforce the limit
         args = self._create_args(method_name, method_dir, max_scenarios=num_scenarios, **kwargs)
+        # Snapshot args/config for复现
+        snapshot_args(vars(args), run_paths["configs"])
         
         # Modify fuzzer to support quantitative control
         # This requires modifying fuzzer.py to accept scenario count limit
@@ -157,48 +176,12 @@ class ExperimentManager:
                 return
             
             # For ScenarioFuzz-LLM, RAG-ScenarioFuzz, and SimilarityComparison:
-            # Need to manage environment before running fuzzer
-            script_dir = PROJECT_ROOT / "script"
-            
-            # Ensure CARLA is running (calls init.sh if needed)
-            project_root = PROJECT_ROOT
-            ensure_carla_running(script_dir, project_root)
-            
-            # Run init.sh to clean environment before each run
-            print("[INFO] Running init to clean environment...")
-            run_init_script(script_dir, project_root)
-            
-            # Lazy import to avoid api.json dependency
-            # Initialize environment
-            conf, town, town_map, client, world, G = fuzzer.init_env(args)
-            
-            # Method-specific configuration
-            if method_name == "RAG-ScenarioFuzz":
-                conf.enable_rag = True
-                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
-                conf.rag_k = kwargs.get('rag_k', 5)
-            elif method_name == "ScenarioFuzz-LLM":
-                conf.enable_rag = False
-                # Still enable metrics for non-RAG ScenarioFuzz-LLM
-                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
-            elif method_name == "SimilarityComparison":
-                # SimilarityComparison: always enable RAG (needed for embedding/hybrid methods)
-                conf.enable_rag = True
-                # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
-                conf.rag_k = kwargs.get('rag_k', 5)
-                # Configure similarity scoring method
+            # Defer CARLA init into the retry loop to allow automatic restarts on failure.
+            if method_name == "SimilarityComparison":
                 similarity_method = kwargs.get('similarity_scoring_method', 'answer2')
-                conf.similarity_scoring_method = similarity_method
-                # Configure hybrid method weights
-                conf.hybrid_embedding_weight = kwargs.get('hybrid_embedding_weight', 0.6)
-                # Configure feature method weights
-                conf.feature_position_weight = kwargs.get('feature_position_weight', 0.3)
-                conf.feature_speed_weight = kwargs.get('feature_speed_weight', 0.3)
-                conf.feature_angular_accel_weight = kwargs.get('feature_angular_accel_weight', 0.2)
-                conf.feature_relative_position_weight = kwargs.get('feature_relative_position_weight', 0.2)
                 print(f"[SimilarityComparison] Using similarity scoring method: {similarity_method}")
             
-            # Run fuzzing (modified to respect scenario limit)
+            # Run fuzzing (modified to respect scenario limit) with built-in retry/restart.
             self._run_with_scenario_limit(args, experiment_id, num_scenarios)
             
         except KeyboardInterrupt:
@@ -241,10 +224,31 @@ class ExperimentManager:
             except Exception as token_error:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
+            # Copy scenario files from data/output/queue to experiment directory (for TM-Fuzzer compatibility)
+            # This handles cases where script/test.py was called without --out-dir
+            if method_name == "TM-Fuzzer":
+                self._copy_scenario_files_to_experiment_dir(method_dir)
+            
             # Copy recorder files from data/output/recorder to experiment directory before archiving
             # This is needed because Docker volume maps to data/output/recorder,
             # but experiment outputs are in experiment_results/.../
             self._copy_recorder_files_to_experiment_dir(method_dir)
+            
+            # Save scenario database after run (unified for all methods)
+            # This ensures the database is saved even if _run_with_scenario_limit didn't save it
+            scenario_db_path = PROJECT_ROOT / "data" / "scenario_db.json"
+            if scenario_db_path.exists():
+                try:
+                    db_dest = method_dir / "scenario_db.json"
+                    shutil.copy2(str(scenario_db_path), str(db_dest))
+                    print(f"[INFO] 保存场景库到实验目录：{db_dest}")
+                except Exception as copy_db_err:
+                    print(f"[WARNING] Failed to save scenario DB snapshot: {copy_db_err}")
+
+            try:
+                reorganize_legacy_files(method_dir)
+            except Exception as reorganize_error:
+                print(f"[WARNING] Failed to reorganize run layout: {reorganize_error}")
             
             # Archive all artifacts for this run (results + metadata) for reproducibility
             # Only archive if experiment completed successfully (not interrupted)
@@ -301,9 +305,13 @@ class ExperimentManager:
         # Create output directory
         method_dir = self.output_base_dir / method_name / experiment_id
         method_dir.mkdir(parents=True, exist_ok=True)
+        run_paths = ensure_run_layout(method_dir)
         
         # Configure
         args = self._create_args(method_name, method_dir, **kwargs)
+        snapshot_args(vars(args), run_paths["configs"])
+        # Prepare scenario DB path (no auto-clear here to preserve state on unexpected interrupts)
+        scenario_db_path = Path(getattr(args, "scenario_db", "./data/scenario_db.json"))
         
         start_time = time.time()
         experiment_start_time = start_time  # Record experiment start time for recorder file filtering
@@ -432,6 +440,14 @@ class ExperimentManager:
                 # Run main fuzzing loop
                 # Note: fuzzer.py main loop needs to check conf.experiment_timeout
                 fuzzer.main(args)
+                # Snapshot scenario DB after run
+                if scenario_db_path.exists():
+                    try:
+                        db_dest = method_dir / "scenario_db.json"
+                        shutil.copy(scenario_db_path, db_dest)
+                        print(f"[INFO] Saved scenario DB snapshot to {db_dest}")
+                    except Exception as copy_db_err:
+                        print(f"[WARNING] Failed to save scenario DB snapshot: {copy_db_err}")
             finally:
                 # Signal monitoring thread to stop
                 stop_monitoring.set()
@@ -464,6 +480,11 @@ class ExperimentManager:
 
             # Copy recorder files from data/output/recorder to experiment directory before archiving
             self._copy_recorder_files_to_experiment_dir(method_dir)
+
+            try:
+                reorganize_legacy_files(method_dir)
+            except Exception as reorganize_error:
+                print(f"[WARNING] Failed to reorganize run layout: {reorganize_error}")
             
             # Archive artifacts for timed run as well
             # Only archive if experiment completed successfully
@@ -492,8 +513,25 @@ class ExperimentManager:
             '--timeout', str(kwargs.get('timeout', 60)),
             '--sim-port', str(kwargs.get('sim_port', 4000)),
             '--max-scenarios', str(kwargs.get('max_scenarios', 0)),
+            '--rag-k', str(kwargs.get('rag_k', 5)),
+            '--similarity-scoring-method', str(kwargs.get('similarity_scoring_method', 'answer2')),
+            '--hybrid-embedding-weight', str(kwargs.get('hybrid_embedding_weight', 0.6)),
+            '--feature-position-weight', str(kwargs.get('feature_position_weight', 0.3)),
+            '--feature-speed-weight', str(kwargs.get('feature_speed_weight', 0.3)),
+            '--feature-angular-accel-weight', str(kwargs.get('feature_angular_accel_weight', 0.2)),
+            '--feature-relative-position-weight', str(kwargs.get('feature_relative_position_weight', 0.2)),
             '--allow-out-dir-exists',
         ]
+        
+        # Add determ-seed if provided
+        if kwargs.get('determ_seed') is not None:
+            args_list.extend(['--determ-seed', str(kwargs.get('determ_seed'))])
+
+        # Ablation toggles
+        if kwargs.get('disable_similarity'):
+            args_list.append('--disable-similarity')
+        if kwargs.get('disable_guided_mutation'):
+            args_list.append('--disable-guided-mutation')
         
         # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
         # Metrics are now calculated offline after experiment completion
@@ -527,11 +565,11 @@ class ExperimentManager:
         # This prevents the whole experiment process from aborting when the simulator
         # becomes temporarily unavailable, and ensures we complete the target number of scenarios.
         attempt = 0
-        # Increased retry limits to ensure program can run until max_scenarios is reached
-        # When max_scenarios is set, we want to keep retrying until the target is reached
-        MAX_RETRY_ATTEMPTS = 1000  # Maximum number of retry attempts (increased from 10)
+        # Retry limits: set to infinity to align with "no max time" expectation.
+        # Change to finite values if operational safety limits are desired.
+        MAX_RETRY_ATTEMPTS = float("inf")
         retry_start_time = time.time()
-        MAX_RETRY_DURATION = 7 * 24 * 3600  # Maximum retry duration: 7 days (increased from 24 hours)
+        MAX_RETRY_DURATION = float("inf")  # seconds
 
         # Resolve script and project paths here to avoid circular imports at module load time
         script_dir = PROJECT_ROOT / "script"
@@ -543,6 +581,9 @@ class ExperimentManager:
         # Get output directory to count scenarios
         output_dir = Path(args.out_dir) if hasattr(args, 'out_dir') else None
         print(f"[INFO] Output directory: {output_dir}")
+
+        # Prepare scenario DB path (no auto-clear here; scripts handle clean between parts)
+        scenario_db_path = Path(getattr(args, "scenario_db", "./data/scenario_db.json"))
 
         # Only run init script once at the beginning
         init_script_run = False
@@ -655,6 +696,14 @@ class ExperimentManager:
                     # Copy recorder files after successful fuzzer run
                     if output_dir:
                         self._copy_recorder_files_to_experiment_dir(output_dir)
+                        # Snapshot scenario DB after run
+                        if scenario_db_path.exists():
+                            try:
+                                db_dest = output_dir / "scenario_db.json"
+                                shutil.copy(scenario_db_path, db_dest)
+                                print(f"[INFO] Saved scenario DB snapshot to {db_dest}")
+                            except Exception as copy_db_err:
+                                print(f"[WARNING] Failed to save scenario DB snapshot: {copy_db_err}")
                 except RuntimeError as runtime_err:
                     # Check if this is a CARLA connection/timeout error
                     msg = str(runtime_err)
@@ -871,8 +920,11 @@ class ExperimentManager:
     def _count_scenarios(self, output_dir: Path) -> int:
         """Count generated scenarios in output directory"""
         queue_dir = output_dir / "queue"
+        scenarios_dir = output_dir / "scenarios"
         if queue_dir.exists():
             return len(list(queue_dir.glob("*.json")))
+        if scenarios_dir.exists():
+            return len(list(scenarios_dir.glob("*.json")))
         return 0
 
     def continue_experiment(self, method_name: str, experiment_id: str, additional_scenarios: int, **kwargs):
@@ -896,6 +948,8 @@ class ExperimentManager:
         
         if not method_dir.exists():
             raise ValueError(f"Experiment directory not found: {method_dir}")
+        
+        run_paths = ensure_run_layout(method_dir)
         
         # Count existing scenarios
         existing_count = self._count_scenarios(method_dir)
@@ -921,6 +975,7 @@ class ExperimentManager:
         # Configure args for continuing experiment
         # Use existing output directory, don't clear it
         args = self._create_args(method_name, method_dir, max_scenarios=target_scenarios, **kwargs)
+        snapshot_args(vars(args), run_paths["configs"])
         
         # Ensure we don't clear existing data
         args.allow_out_dir_exists = True
@@ -982,6 +1037,24 @@ class ExperimentManager:
             except Exception as token_error:
                 print(f"[WARNING] Could not retrieve token statistics: {token_error}")
 
+            # Copy scenario files from data/output/queue to experiment directory (for TM-Fuzzer compatibility)
+            if method_name == "TM-Fuzzer":
+                try:
+                    self._copy_scenario_files_to_experiment_dir(method_dir)
+                except Exception as scenario_copy_error:
+                    print(f"[WARNING] Could not copy scenario files: {scenario_copy_error}")
+            
+            # Copy recorder files and整理布局
+            try:
+                self._copy_recorder_files_to_experiment_dir(method_dir)
+            except Exception as recorder_error:
+                print(f"[WARNING] Could not copy recorder files: {recorder_error}")
+
+            try:
+                reorganize_legacy_files(method_dir)
+            except Exception as reorganize_error:
+                print(f"[WARNING] Failed to reorganize run layout: {reorganize_error}")
+
             # Archive all artifacts for this run
             # Only archive if experiment completed successfully
             try:
@@ -995,6 +1068,55 @@ class ExperimentManager:
                     print(f"[INFO] Skipping archive: experiment directory does not exist for {experiment_id}")
             except Exception as archive_error:
                 print(f"[WARNING] Failed to archive experiment run {experiment_id}: {archive_error}")
+    
+    def _copy_scenario_files_to_experiment_dir(self, method_dir: Path):
+        """
+        Copy scenario files from data/output/queue to experiment directory.
+        
+        This is needed for TM-Fuzzer when script/test.py was called without --out-dir,
+        causing scenarios to be saved to data/output/queue instead of the experiment directory.
+        
+        Args:
+            method_dir: Path to experiment method directory
+        """
+        try:
+            if not method_dir.exists():
+                return
+            
+            data_queue_dir = PROJECT_ROOT / "data" / "output" / "queue"
+            experiment_queue_dir = method_dir / "queue"
+            
+            # Create experiment queue directory if it doesn't exist
+            experiment_queue_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Check if experiment queue already has files
+            existing_scenario_files = list(experiment_queue_dir.glob("*.pkl")) + list(experiment_queue_dir.glob("*.json"))
+            if existing_scenario_files:
+                print(f"[INFO] Experiment queue directory already has {len(existing_scenario_files)} file(s), skipping copy")
+                return
+            
+            # Check if data/output/queue has scenario files
+            if not data_queue_dir.exists() or not data_queue_dir.is_dir():
+                return
+            
+            scenario_files = list(data_queue_dir.glob("*.pkl")) + list(data_queue_dir.glob("*.json"))
+            if not scenario_files:
+                return
+            
+            # Copy all scenario files from data/output/queue to experiment queue
+            copied_count = 0
+            for scenario_file in scenario_files:
+                target_file = experiment_queue_dir / scenario_file.name
+                if not target_file.exists():
+                    shutil.copy2(str(scenario_file), str(target_file))
+                    copied_count += 1
+            
+            if copied_count > 0:
+                print(f"[INFO] Copied {copied_count} scenario file(s) from {data_queue_dir} to {experiment_queue_dir}")
+        except Exception as scenario_copy_error:
+            print(f"[WARNING] Failed to copy scenario files to experiment directory: {scenario_copy_error}")
+            import traceback
+            traceback.print_exc()
     
     def _copy_recorder_files_to_experiment_dir(self, method_dir: Path):
         """

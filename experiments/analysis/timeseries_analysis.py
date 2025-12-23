@@ -70,9 +70,13 @@ def extract_timeseries_data(method_dirs: Dict[str, List[Path]]) -> Dict[str, Dic
     for method, exp_dirs in method_dirs.items():
         method_data = {
             "pc": [],
+            "pc_incremental": [],
             "pec": [],
+            "pec_incremental": [],
             "tcd": [],
+            "tcd_incremental": [],
             "bcm": [],
+            "bcm_incremental": [],
             "scenario_ids": []
         }
         
@@ -88,13 +92,27 @@ def extract_timeseries_data(method_dirs: Dict[str, List[Path]]) -> Dict[str, Dic
                     value = record.get(metric, 0.0)
                     if isinstance(value, (int, float)):
                         method_data[metric].append(float(value))
+                    inc_val = record.get(f"{metric}_incremental", None)
+                    if isinstance(inc_val, (int, float)):
+                        method_data[f"{metric}_incremental"].append(float(inc_val))
         
         # Sort by scenario_id if available
         if method_data["scenario_ids"]:
             sorted_indices = np.argsort(method_data["scenario_ids"])
-            for metric in ["pc", "pec", "tcd", "bcm"]:
-                method_data[metric] = [method_data[metric][i] for i in sorted_indices]
+            for metric in ["pc", "pc_incremental", "pec", "pec_incremental", "tcd", "tcd_incremental", "bcm", "bcm_incremental"]:
+                method_data[metric] = [method_data[metric][i] for i in sorted_indices if i < len(method_data[metric])]
             method_data["scenario_ids"] = [method_data["scenario_ids"][i] for i in sorted_indices]
+        
+        # Derive incremental values if not present
+        for metric in ["pc", "pec", "tcd", "bcm"]:
+            inc_key = f"{metric}_incremental"
+            if not method_data[inc_key] and method_data[metric]:
+                derived = []
+                prev = 0.0
+                for v in method_data[metric]:
+                    derived.append(v - prev)
+                    prev = v
+                method_data[inc_key] = derived
         
         all_timeseries[method] = method_data
     
@@ -178,6 +196,7 @@ def generate_timeseries_report(timeseries_data: Dict[str, Dict[str, List[float]]
             values = data.get(metric, [])
             if not values:
                 continue
+            inc_values = data.get(f"{metric}_incremental", [])
             
             # Calculate statistics
             method_results[metric] = {
@@ -189,7 +208,10 @@ def generate_timeseries_report(timeseries_data: Dict[str, Dict[str, List[float]]
                 "max": float(np.max(values)),
                 "trend": "increasing" if values[-1] > values[0] else "decreasing" if values[-1] < values[0] else "stable",
                 "convergence_point": detect_convergence(values),
-                "n_scenarios": len(values)
+                "n_scenarios": len(values),
+                "incremental_mean": float(np.mean(inc_values)) if inc_values else 0.0,
+                "incremental_max": float(np.max(inc_values)) if inc_values else 0.0,
+                "incremental_min": float(np.min(inc_values)) if inc_values else 0.0
             }
         
         results[method] = method_results
@@ -229,6 +251,9 @@ def generate_timeseries_report(timeseries_data: Dict[str, Dict[str, List[float]]
                 f.write(f"- **Std deviation**: {metric_data['std']:.6f}\n")
                 f.write(f"- **Min**: {metric_data['min']:.6f}\n")
                 f.write(f"- **Max**: {metric_data['max']:.6f}\n")
+                f.write(f"- **Incremental mean**: {metric_data['incremental_mean']:.6f}\n")
+                f.write(f"- **Incremental max**: {metric_data['incremental_max']:.6f}\n")
+                f.write(f"- **Incremental min**: {metric_data['incremental_min']:.6f}\n")
                 f.write(f"- **Trend**: {metric_data['trend']}\n")
                 
                 conv_point = metric_data['convergence_point']
@@ -289,6 +314,28 @@ def generate_timeseries_figures(timeseries_data: Dict[str, Dict[str, List[float]
         plt.tight_layout()
         
         fig_path = figures_dir / f"{metric}_timeseries.png"
+        plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"[TimeSeriesAnalysis] Saved figure: {fig_path}")
+        
+        # Incremental (growth speed) plot
+        inc_key = f"{metric}_incremental"
+        fig, ax = plt.subplots(figsize=(12, 6))
+        for method in methods:
+            data = timeseries_data[method]
+            inc_values = data.get(inc_key, [])
+            scenario_ids = data.get("scenario_ids", list(range(len(inc_values))))
+            if not inc_values:
+                continue
+            x_values = scenario_ids if scenario_ids else list(range(len(inc_values)))
+            ax.bar(x_values, inc_values, alpha=0.6, label=METHOD_NAMES.get(method, method))
+        ax.set_xlabel('Scenario ID', fontsize=12)
+        ax.set_ylabel('Incremental Contribution', fontsize=12)
+        ax.set_title(f'{metric_name} Incremental Contribution per Scenario', fontsize=14, fontweight='bold')
+        ax.legend()
+        ax.grid(alpha=0.3, axis='y')
+        plt.tight_layout()
+        fig_path = figures_dir / f"{metric}_incremental.png"
         plt.savefig(fig_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"[TimeSeriesAnalysis] Saved figure: {fig_path}")

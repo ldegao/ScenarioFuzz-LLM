@@ -6,6 +6,7 @@ Re-ranks retrieved documents using cross-encoder models for better relevance
 import numpy as np
 from typing import List, Dict, Any, Optional
 import re
+import importlib
 
 
 class CrossEncoderReranker:
@@ -23,21 +24,18 @@ class CrossEncoderReranker:
         """
         self.model_name = model_name
         self.model = None
-        self._load_model()
     
     def _load_model(self):
-        """Lazy load the cross-encoder model"""
+        """Lazy load the cross-encoder model (defer heavy import)."""
         try:
-            from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(self.model_name)
+            ce = _get_cross_encoder()
+            self.model = ce(self.model_name)
             print(f"[Reranker] Loaded cross-encoder model: {self.model_name}")
         except ImportError as e:
-            # Fail-fast: reranker requires sentence-transformers
             raise ImportError(
                 "[Reranker] sentence-transformers is required for CrossEncoderReranker"
             ) from e
         except Exception as e:
-            # Any other error should also surface immediately
             raise RuntimeError(
                 f"[Reranker] Failed to load cross-encoder model {self.model_name}: {e}"
             ) from e
@@ -61,10 +59,7 @@ class CrossEncoderReranker:
             return []
         
         if self.model is None:
-            raise RuntimeError(
-                "[Reranker] CrossEncoder model is not loaded. "
-                "Ensure sentence-transformers is installed and _load_model() succeeded."
-            )
+            self._load_model()
         
         # Create query-document pairs
         pairs = [[query, doc] for doc in documents]
@@ -89,6 +84,17 @@ class CrossEncoderReranker:
             })
         
         return results
+
+
+def _get_cross_encoder():
+    """
+    Lazily import CrossEncoder to avoid heavy imports during test collection.
+    """
+    spec = importlib.util.find_spec("sentence_transformers")
+    if spec is None:
+        raise ImportError("[Reranker] sentence-transformers is required for CrossEncoderReranker")
+    module = importlib.import_module("sentence_transformers")
+    return module.CrossEncoder
 
 
 class SimpleReranker:

@@ -255,7 +255,7 @@ def close_processes():
         print(f"Killed process {pid}")
 
 
-def run_test(sim_port, target, density, town, duration, max_failures=3):
+def run_test(sim_port, target, density, town, duration, max_failures=3, out_dir=None, max_scenarios=None):
     """Directly call the main function from fuzzer.py to run the simulation test."""
 
     # Get default argument values from argparse
@@ -270,6 +270,15 @@ def run_test(sim_port, target, density, town, duration, max_failures=3):
         "town": town,
         "timeout": duration
     }
+    
+    # Set output directory if provided (for experiment manager integration)
+    if out_dir is not None:
+        custom_args["out_dir"] = out_dir
+        custom_args["allow_out_dir_exists"] = True  # Allow using existing experiment directory
+    
+    # Set max_scenarios if provided (for precise scenario count control)
+    if max_scenarios is not None and max_scenarios > 0:
+        custom_args["max_scenarios"] = max_scenarios
 
     # Merge default arguments with custom arguments
     default_args.update(custom_args)
@@ -352,6 +361,10 @@ def parse_cli_args():
                         help="CARLA RPC port")
     parser.add_argument("--max-failures", type=int, default=3,
                         help="Abort after this many consecutive failures")
+    parser.add_argument("--out-dir", type=str, default=None,
+                        help="Output directory for scenarios (default: ./data/output)")
+    parser.add_argument("--max-scenarios", type=int, default=None,
+                        help="Maximum number of scenarios to generate (0 = unlimited, default: None)")
     return parser.parse_args()
 
 
@@ -364,4 +377,6 @@ if __name__ == "__main__":
         town=str(args.town),
         duration=args.duration,
         max_failures=args.max_failures,
+        out_dir=getattr(args, 'out_dir', None),
+        max_scenarios=getattr(args, 'max_scenarios', None),
     )

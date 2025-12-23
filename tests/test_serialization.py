@@ -519,6 +519,8 @@ class TestEdgeCases(unittest.TestCase):
             
             self.assertEqual(len(loaded), 1000)
             self.assertEqual(loaded["scenario_0"], "Description for scenario 0")
+        except Exception as e:
+            self.fail(f"大数据量序列化失败: {e}")
     
     def test_special_values_serialization(self):
         """测试特殊值的序列化（None, True, False, 数字）"""

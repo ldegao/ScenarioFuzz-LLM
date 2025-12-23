@@ -243,6 +243,17 @@ def ini_hyperparameters(conf, args):
     # Scenario limit and RAG configuration (can be overridden by experiment manager)
     conf.max_scenarios = getattr(args, "max_scenarios", 0)
     conf.enable_rag = getattr(args, "enable_rag", False)
+    conf.rag_k = getattr(args, "rag_k", conf.rag_k)
+    # Similarity / feature configuration from CLI (used by SimilarityComparison)
+    conf.similarity_scoring_method = getattr(args, "similarity_scoring_method", conf.similarity_scoring_method)
+    conf.hybrid_embedding_weight = getattr(args, "hybrid_embedding_weight", conf.hybrid_embedding_weight)
+    conf.feature_position_weight = getattr(args, "feature_position_weight", conf.feature_position_weight)
+    conf.feature_speed_weight = getattr(args, "feature_speed_weight", conf.feature_speed_weight)
+    conf.feature_angular_accel_weight = getattr(args, "feature_angular_accel_weight", conf.feature_angular_accel_weight)
+    conf.feature_relative_position_weight = getattr(args, "feature_relative_position_weight", conf.feature_relative_position_weight)
+    # Ablation toggles: disable similarity scoring and/or guided mutation
+    conf.disable_similarity = getattr(args, "disable_similarity", False)
+    conf.disable_guided_mutation = getattr(args, "disable_guided_mutation", False)
     # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
     # GPT-based evaluation configuration
     # Default is enabled; can be disabled via CLI or by callers overriding
@@ -314,6 +325,25 @@ def set_args():
                                  help="Maximum number of scenarios to evaluate in this run (0 = unlimited)")
     argument_parser.add_argument("--enable-rag", action="store_true",
                                  help="Enable RAG-based retrieval for prompt construction")
+    argument_parser.add_argument("--rag-k", default=5, type=int,
+                                 help="Top-k retrieval size for RAG")
+    argument_parser.add_argument("--similarity-scoring-method", default="answer2", type=str,
+                                 choices=["answer1", "answer2", "embedding", "feature", "hybrid"],
+                                 help="Similarity scoring method used by SimilarityComparison")
+    argument_parser.add_argument("--hybrid-embedding-weight", default=0.6, type=float,
+                                 help="Embedding weight for hybrid similarity method (0-1)")
+    argument_parser.add_argument("--feature-position-weight", default=0.3, type=float,
+                                 help="Feature weight for position component")
+    argument_parser.add_argument("--feature-speed-weight", default=0.3, type=float,
+                                 help="Feature weight for speed component")
+    argument_parser.add_argument("--feature-angular-accel-weight", default=0.2, type=float,
+                                 help="Feature weight for angular acceleration component")
+    argument_parser.add_argument("--feature-relative-position-weight", default=0.2, type=float,
+                                 help="Feature weight for relative position component")
+    argument_parser.add_argument("--disable-similarity", action="store_true",
+                                 help="Disable similarity scoring (set similarity to 0, skip GPT/embedding/feature)")
+    argument_parser.add_argument("--disable-guided-mutation", action="store_true",
+                                 help="Disable guided mutation (skip GPT answer3, use random mutation guidance)")
     argument_parser.add_argument("--disable-gpt", action="store_true",
                                  help="Disable GPT-based evaluation and logging (non-GPT baseline)")
     argument_parser.add_argument("--allow-out-dir-exists", action="store_true",
@@ -341,6 +371,57 @@ def extract_answer1_overall_similarity(response_text):
     overall_similarity = int(similarity_match.group(1)) if similarity_match else None
 
     return answer1_description, overall_similarity
+
+
+def _clamp(value: float, min_val: float, max_val: float) -> float:
+    """Clamp value into [min_val, max_val]."""
+    return max(min_val, min(max_val, value))
+
+
+def _normalize_objectives(min_dist: float, nova: float, similarity_score: float):
+    """
+    Normalize GA objectives to comparable scales.
+    - min_dist: clipped to 0–50m, normalized to [0,1] (0 best for minimization with negative weight).
+    - nova: clipped to 0–20 (speed delta), normalized to [0,1].
+    - similarity_score: expected 0–100; converted to dissimilarity in [0,1] via (1 - sim/100).
+    """
+    MIN_DIST_MAX = 50.0
+    NOVA_MAX = 20.0
+
+    min_dist = 0.0 if min_dist is None else float(min_dist)
+    nova = 0.0 if nova is None else float(nova)
+    similarity_score = 0.0 if similarity_score is None else float(similarity_score)
+
+    min_dist_norm = _clamp(min_dist, 0.0, MIN_DIST_MAX) / MIN_DIST_MAX
+    nova_norm = _clamp(nova, 0.0, NOVA_MAX) / NOVA_MAX
+    sim_norm = 1.0 - (_clamp(similarity_score, 0.0, 100.0) / 100.0)
+
+    return min_dist_norm, nova_norm, sim_norm
+
+
+def _ensure_fitness_valid(ind, default=(0.0, 0.0, 0.0)):
+    """
+    Ensure an individual has a 3-tuple fitness. If missing/invalid, set to default.
+    This guards DEAP selection (crowding distance) from IndexError due to empty fitness.
+    """
+    try:
+        if not hasattr(ind, "fitness") or ind.fitness is None:
+            raise ValueError("no fitness attr")
+        vals = getattr(ind.fitness, "values", ())
+        if len(vals) != 3:
+            ind.fitness.values = default
+        # mark valid if not already
+        if not ind.fitness.valid:
+            ind.fitness.values = tuple(ind.fitness.values)
+    except Exception:
+        # fallback: attach a fitness object if missing or broken
+        try:
+            if hasattr(ind, "__dict__") and "fitness" not in ind.__dict__:
+                ind.fitness = ScenarioFitness()
+            ind.fitness.values = default
+        except Exception:
+            # last-resort: ignore individual but avoid crashes
+            pass
 
 
 def evaluation(ind: Scenario):
@@ -460,442 +541,371 @@ def evaluation(ind: Scenario):
         # This block can be disabled (e.g., for TM-Fuzzer non-GPT baseline)
         answer3_vehicle_info = {}
         
-        # Get similarity scoring method from config
-        similarity_method = getattr(conf, "similarity_scoring_method", "answer2") if conf else "answer2"
-        
-        # Build path to time_record JSON using configured time_record_dir
-        time_record_dir = getattr(conf, "time_record_dir", "./data/output/time_record") if conf else "./data/output/time_record"
-        time_record_path = os.path.join(
-            time_record_dir,
-            f"gid:{ind.generation_id}_sid:{ind.scenario_id}.json"
-        )
-        scenario_description = str(
-            gpt.get_frame_data(time_record_path, ind.state.min_dist_frame)
-        ).replace("\n", "").replace(' ', '')
-        
-        # Check if we should use non-GPT similarity methods
-        if similarity_method in ["embedding", "feature", "hybrid"]:
-            # Use non-GPT similarity calculation methods
-            try:
-                from similarity_calculator import (
-                    calculate_embedding_similarity,
-                    calculate_feature_similarity,
-                    calculate_hybrid_similarity,
-                    extract_features_from_json,
-                    extract_features_from_text
-                )
-                
-                # Ensure RAG engine is initialized for embedding and hybrid methods
-                rag_engine = None
-                if similarity_method in ["embedding", "hybrid"]:
-                    if conf and conf.enable_rag:
-                        try:
-                            # Initialize RAG engine if not exists (reuse existing logic)
-                            if not hasattr(evaluation, 'rag_engine'):
-                                if getattr(conf, 'use_enhanced_rag', False):
-                                    from rag_module import EnhancedRAGEngine
-                                    evaluation.rag_engine = EnhancedRAGEngine(
-                                        top_k=conf.rag_k,
-                                        use_hybrid_search=getattr(conf, 'use_hybrid_search', False),
-                                        hybrid_alpha=getattr(conf, 'hybrid_alpha', 0.7),
-                                        use_reranking=getattr(conf, 'use_reranking', False),
-                                        reranker_model=getattr(conf, 'reranker_model', None)
-                                    )
-                                else:
-                                    from rag_module import RAGEngine
-                                    evaluation.rag_engine = RAGEngine(top_k=conf.rag_k)
-                                
-                                evaluation.rag_engine.initialize(load_mock_data=True)
-                                
-                                # Add existing Scenario_database to RAG knowledge base
-                                with _scenario_db_lock:
-                                    db_copy = dict(Scenario_database)
-                                for key, desc in db_copy.items():
-                                    evaluation.rag_engine.add_scenario_to_knowledge_base({
-                                        'id': f'db_{key}',
-                                        'description': desc
-                                    }, rebuild_index=False)
-                                
-                                # Rebuild index
-                                scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
-                                if len(scenario_descriptions) > 0:
-                                    vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
-                                    scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
-                                    evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
-                                    if getattr(conf, 'use_hybrid_search', False) and hasattr(evaluation.rag_engine, 'hybrid_retriever') and evaluation.rag_engine.hybrid_retriever:
-                                        evaluation.rag_engine.hybrid_retriever.fit_bm25(scenario_descriptions)
-                            
-                            rag_engine = evaluation.rag_engine
-                        except Exception as e:
-                            print(f"[Similarity] Warning: Failed to initialize RAG engine: {e}")
-                            rag_engine = None
-                
-                # Get Scenario_database with lock
-                with _scenario_db_lock:
-                    scenario_db_copy = dict(Scenario_database)
-                
-                # Calculate similarity based on method
-                if similarity_method == "embedding":
-                    if rag_engine is None:
-                        print("[Similarity] Warning: RAG engine not available for embedding method, using default score 0")
-                        overall_similarity = 0
-                    else:
-                        overall_similarity = calculate_embedding_similarity(
-                            scenario_description,
-                            scenario_db_copy,
-                            rag_engine
-                        )
-                        print(f"[Similarity] Embedding similarity score: {overall_similarity}")
-                
-                elif similarity_method == "feature":
-                    # Extract features from JSON
-                    scenario_features = extract_features_from_json(time_record_path, ind.state.min_dist_frame)
-                    
-                    # If JSON extraction fails, try text extraction
-                    if not scenario_features:
-                        scenario_features = extract_features_from_text(scenario_description)
-                    
-                    # Prepare feature weights
-                    feature_weights = {
-                        "position_weight": getattr(conf, 'feature_position_weight', 0.3),
-                        "speed_weight": getattr(conf, 'feature_speed_weight', 0.3),
-                        "angular_accel_weight": getattr(conf, 'feature_angular_accel_weight', 0.2),
-                        "relative_position_weight": getattr(conf, 'feature_relative_position_weight', 0.2)
-                    }
-                    
-                    overall_similarity = calculate_feature_similarity(
-                        scenario_features,
-                        scenario_db_copy,
-                        feature_weights
+        disable_similarity = getattr(conf, "disable_similarity", False)
+        disable_guided_mutation = getattr(conf, "disable_guided_mutation", False)
+
+        # If either toggle is on, skip similarity & guided mutation entirely.
+        if disable_similarity or disable_guided_mutation:
+            overall_similarity = 0
+            answer3_vehicle_info = {}
+        else:
+            # Get similarity scoring method from config
+            similarity_method = getattr(conf, "similarity_scoring_method", "answer2") if conf else "answer2"
+            
+            # Build path to time_record JSON using configured time_record_dir
+            time_record_dir = getattr(conf, "time_record_dir", "./data/output/time_record") if conf else "./data/output/time_record"
+            time_record_path = os.path.join(
+                time_record_dir,
+                f"gid:{ind.generation_id}_sid:{ind.scenario_id}.json"
+            )
+            scenario_description = str(
+                gpt.get_frame_data(time_record_path, ind.state.min_dist_frame)
+            ).replace("\n", "").replace(' ', '')
+            
+            # Check if we should use non-GPT similarity methods
+            if similarity_method in ["embedding", "feature", "hybrid"]:
+                # Use non-GPT similarity calculation methods
+                try:
+                    from similarity_calculator import (
+                        calculate_embedding_similarity,
+                        calculate_feature_similarity,
+                        calculate_hybrid_similarity,
+                        extract_features_from_json,
+                        extract_features_from_text
                     )
-                    print(f"[Similarity] Feature similarity score: {overall_similarity}")
-                
-                elif similarity_method == "hybrid":
-                    # Extract features
-                    scenario_features = extract_features_from_json(time_record_path, ind.state.min_dist_frame)
-                    if not scenario_features:
-                        scenario_features = extract_features_from_text(scenario_description)
                     
-                    # Prepare weights
-                    hybrid_weights = {
-                        "embedding_weight": getattr(conf, 'hybrid_embedding_weight', 0.6),
-                        "feature_weights": {
+                    # Ensure RAG engine is initialized for embedding and hybrid methods
+                    rag_engine = None
+                    if similarity_method in ["embedding", "hybrid"]:
+                        if conf and conf.enable_rag:
+                            try:
+                                # Initialize RAG engine if not exists (reuse existing logic)
+                                if not hasattr(evaluation, 'rag_engine'):
+                                    if getattr(conf, 'use_enhanced_rag', False):
+                                        from rag_module import EnhancedRAGEngine
+                                        evaluation.rag_engine = EnhancedRAGEngine(
+                                            top_k=conf.rag_k,
+                                            use_hybrid_search=getattr(conf, 'use_hybrid_search', False),
+                                            hybrid_alpha=getattr(conf, 'hybrid_alpha', 0.7),
+                                            use_reranking=getattr(conf, 'use_reranking', False),
+                                            reranker_model=getattr(conf, 'reranker_model', None)
+                                        )
+                                    else:
+                                        from rag_module import RAGEngine
+                                        evaluation.rag_engine = RAGEngine(top_k=conf.rag_k)
+                                    
+                                    evaluation.rag_engine.initialize(load_mock_data=True)
+                                    
+                                    # Add existing Scenario_database to RAG knowledge base
+                                    with _scenario_db_lock:
+                                        db_copy = dict(Scenario_database)
+                                    for key, desc in db_copy.items():
+                                        evaluation.rag_engine.add_scenario_to_knowledge_base({
+                                            'id': f'db_{key}',
+                                            'description': desc
+                                        }, rebuild_index=False)
+                                    
+                                    # Rebuild index
+                                    scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
+                                    if len(scenario_descriptions) > 0:
+                                        vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
+                                        scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
+                                        evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
+                                        if getattr(conf, 'use_hybrid_search', False) and hasattr(evaluation.rag_engine, 'hybrid_retriever') and evaluation.rag_engine.hybrid_retriever:
+                                            evaluation.rag_engine.hybrid_retriever.fit_bm25(scenario_descriptions)
+                                
+                                rag_engine = evaluation.rag_engine
+                            except Exception as e:
+                                print(f"[Similarity] Warning: Failed to initialize RAG engine: {e}")
+                                rag_engine = None
+                    
+                    # Get Scenario_database with lock
+                    with _scenario_db_lock:
+                        scenario_db_copy = dict(Scenario_database)
+                    
+                    # Calculate similarity based on method
+                    if similarity_method == "embedding":
+                        if rag_engine is None:
+                            print("[Similarity] Warning: RAG engine not available for embedding method, using default score 0")
+                            overall_similarity = 0
+                        else:
+                            overall_similarity = calculate_embedding_similarity(
+                                scenario_description,
+                                scenario_db_copy,
+                                rag_engine
+                            )
+                            print(f"[Similarity] Embedding similarity score: {overall_similarity}")
+                    
+                    elif similarity_method == "feature":
+                        # Extract features from JSON
+                        scenario_features = extract_features_from_json(time_record_path, ind.state.min_dist_frame)
+                        
+                        # If JSON extraction fails, try text extraction
+                        if not scenario_features:
+                            scenario_features = extract_features_from_text(scenario_description)
+                        
+                        # Prepare feature weights
+                        feature_weights = {
                             "position_weight": getattr(conf, 'feature_position_weight', 0.3),
                             "speed_weight": getattr(conf, 'feature_speed_weight', 0.3),
                             "angular_accel_weight": getattr(conf, 'feature_angular_accel_weight', 0.2),
                             "relative_position_weight": getattr(conf, 'feature_relative_position_weight', 0.2)
                         }
-                    }
-                    
-                    if rag_engine is None:
-                        print("[Similarity] Warning: RAG engine not available for hybrid method, using feature-only")
-                        # Fallback to feature-only if RAG engine not available
+                        
                         overall_similarity = calculate_feature_similarity(
                             scenario_features,
                             scenario_db_copy,
-                            hybrid_weights["feature_weights"]
+                            feature_weights
                         )
-                    else:
-                        overall_similarity = calculate_hybrid_similarity(
-                            scenario_description,
-                            scenario_features,
-                            scenario_db_copy,
-                            rag_engine,
-                            hybrid_weights
-                        )
-                    print(f"[Similarity] Hybrid similarity score: {overall_similarity}")
-                
-                # Set answer3_vehicle_info to empty for non-GPT methods
-                answer3_vehicle_info = {}
-                
-            except Exception as e:
-                print(f"[Similarity] Error calculating similarity using {similarity_method} method: {e}")
-                traceback.print_exc()
-                overall_similarity = 0
-                answer3_vehicle_info = {}
-        
-        # Use GPT-based evaluation for answer2 method or if enable_gpt_evaluation is True
-        elif similarity_method == "answer2" and (not conf or getattr(conf, "enable_gpt_evaluation", True)):
-
-            # Keep calling GPT until we obtain a valid JSON response with a
-            # numeric overall similarity score. This avoids silently degrading
-            # metrics when the network is unstable.
-            # Add retry limits to prevent infinite loops
-            MAX_GPT_RETRIES = 5  # Maximum number of GPT retry attempts
-            gpt_retry_count = 0
-            base_delay = 5  # Base delay in seconds for exponential backoff
-            
-            while gpt_retry_count < MAX_GPT_RETRIES:
-                # Use RAG to retrieve relevant scenarios if enabled, otherwise use Scenario_database
-                if conf and conf.enable_rag:
-                    try:
-                        # Choose RAG engine based on configuration
-                        if conf.use_enhanced_rag:
-                            from rag_module import EnhancedRAGEngine
-                            # Initialize Enhanced RAG engine if not exists
-                            if not hasattr(evaluation, 'rag_engine'):
-                                evaluation.rag_engine = EnhancedRAGEngine(
-                                    top_k=conf.rag_k,
-                                    use_hybrid_search=conf.use_hybrid_search,
-                                    hybrid_alpha=conf.hybrid_alpha,
-                                    use_reranking=conf.use_reranking,
-                                    reranker_model=conf.reranker_model
-                                )
-                                evaluation.rag_engine.initialize(load_mock_data=True)
-                                # Add existing Scenario_database to RAG knowledge base
-                                # Use lock to protect concurrent access
-                                with _scenario_db_lock:
-                                    db_copy = dict(Scenario_database)  # Create a copy to minimize lock time
-                                for key, desc in db_copy.items():
-                                    evaluation.rag_engine.add_scenario_to_knowledge_base({
-                                        'id': f'db_{key}',
-                                        'description': desc
-                                    }, rebuild_index=False)
-                                # Rebuild index after adding all existing scenarios
-                                scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
-                                if len(scenario_descriptions) > 0:
-                                    vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
-                                    scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
-                                    evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
-                                    # Refit BM25 if hybrid search is enabled
-                                    if conf.use_hybrid_search and evaluation.rag_engine.hybrid_retriever:
-                                        evaluation.rag_engine.hybrid_retriever.fit_bm25(scenario_descriptions)
-                                print(f"[EnhancedRAG] Initialized with {len(scenario_descriptions)} scenarios from Scenario_database")
+                        print(f"[Similarity] Feature similarity score: {overall_similarity}")
+                    
+                    elif similarity_method == "hybrid":
+                        # Extract features
+                        scenario_features = extract_features_from_json(time_record_path, ind.state.min_dist_frame)
+                        if not scenario_features:
+                            scenario_features = extract_features_from_text(scenario_description)
+                        
+                        # Prepare weights
+                        hybrid_weights = {
+                            "embedding_weight": getattr(conf, 'hybrid_embedding_weight', 0.6),
+                            "feature_weights": {
+                                "position_weight": getattr(conf, 'feature_position_weight', 0.3),
+                                "speed_weight": getattr(conf, 'feature_speed_weight', 0.3),
+                                "angular_accel_weight": getattr(conf, 'feature_angular_accel_weight', 0.2),
+                                "relative_position_weight": getattr(conf, 'feature_relative_position_weight', 0.2)
+                            }
+                        }
+                        
+                        if rag_engine is None:
+                            print("[Similarity] Warning: RAG engine not available for hybrid method, using feature-only")
+                            # Fallback to feature-only if RAG engine not available
+                            overall_similarity = calculate_feature_similarity(
+                                scenario_features,
+                                scenario_db_copy,
+                                hybrid_weights["feature_weights"]
+                            )
                         else:
-                            from rag_module import RAGEngine
-                            # Initialize RAG engine if not exists
-                            if not hasattr(evaluation, 'rag_engine'):
-                                evaluation.rag_engine = RAGEngine(top_k=conf.rag_k)
-                                evaluation.rag_engine.initialize(load_mock_data=True)
-                                # Add existing Scenario_database to RAG knowledge base
-                                # Use lock to protect concurrent access
-                                with _scenario_db_lock:
-                                    db_copy = dict(Scenario_database)  # Create a copy to minimize lock time
-                                for key, desc in db_copy.items():
-                                    evaluation.rag_engine.add_scenario_to_knowledge_base({
-                                        'id': f'db_{key}',
-                                        'description': desc
-                                    }, rebuild_index=False)
-                                # Rebuild index after adding all existing scenarios
-                                scenario_descriptions = evaluation.rag_engine.knowledge_base.get_scenario_descriptions()
-                                if len(scenario_descriptions) > 0:
-                                    vectors = evaluation.rag_engine.encoder.encode_batch(scenario_descriptions)
-                                    scenarios = evaluation.rag_engine.knowledge_base.get_all_scenarios()
-                                    evaluation.rag_engine.vector_store.build_index(vectors, scenario_descriptions, scenarios)
-                                print(f"[RAG] Initialized with {len(scenario_descriptions)} scenarios from Scenario_database")
-                        
-                        # Retrieve relevant scenarios using RAG
-                        scenario_dict_str = evaluation.rag_engine.retrieve_and_format_for_prompt(
-                            scenario_description, k=conf.rag_k
-                        )
-                        print(f"[RAG] Retrieved {conf.rag_k} relevant scenarios for prompt")
-                        
-                    except Exception as e:
-                        print(f"[RAG] Warning: RAG retrieval failed, falling back to Scenario_database: {e}")
-                        scenario_dict_str = str(Scenario_database)
-                else:
-                    # Original logic: use Scenario_database
-                    # Use lock to protect concurrent access
-                    with _scenario_db_lock:
-                        scenario_dict_str = str(Scenario_database)
-                
-                question = prompt + "\n scenario snapshot:\n" + str(
-                    scenario_description + "\n___\n Scenario-dict\n" + scenario_dict_str)
-                
-                # Record GPT call metadata
-                gpt_call_start_time = time.time()
-                gpt_call_timestamp = datetime.now().isoformat()
-                
-                response = gpt.call_gpt(question, model_version=None, max_tokens=10000)  # 使用配置文件中的默认模型
-                
-                gpt_call_end_time = time.time()
-                gpt_call_duration = gpt_call_end_time - gpt_call_start_time
-                
-                print("Response:", response)
-                response_json = gpt.extract_json(response)
-
-                if response_json is None:
-                    # Network or parsing failure – retry with exponential backoff
-                    gpt_retry_count += 1
-                    if gpt_retry_count >= MAX_GPT_RETRIES:
-                        print(f"[GPT] Failed to extract JSON response after {MAX_GPT_RETRIES} attempts. Using default similarity score.")
-                        overall_similarity = 0  # Use default score on failure
-                        break
-                    delay = base_delay * (2 ** (gpt_retry_count - 1))  # Exponential backoff
-                    print(f"[GPT] Failed to extract JSON response, retrying ({gpt_retry_count}/{MAX_GPT_RETRIES}) after {delay}s...")
-                    time.sleep(delay)
-                    continue
-
-                try:
-                    overall_similarity = int(gpt.get_overall_similarity(response_json))
+                            overall_similarity = calculate_hybrid_similarity(
+                                scenario_description,
+                                scenario_features,
+                                scenario_db_copy,
+                                rag_engine,
+                                hybrid_weights
+                            )
+                        print(f"[Similarity] Hybrid similarity score: {overall_similarity}")
+                    
+                    # Set answer3_vehicle_info to empty for non-GPT methods
+                    answer3_vehicle_info = {}
+                    
                 except Exception as e:
-                    gpt_retry_count += 1
-                    if gpt_retry_count >= MAX_GPT_RETRIES:
-                        print(f"[GPT] Failed to obtain overall similarity after {MAX_GPT_RETRIES} attempts. Using default similarity score.")
-                        overall_similarity = 0  # Use default score on failure
-                        break
-                    delay = base_delay * (2 ** (gpt_retry_count - 1))  # Exponential backoff
-                    print(f"[GPT] Failed to obtain overall similarity from JSON, retrying ({gpt_retry_count}/{MAX_GPT_RETRIES}) after {delay}s: {e}")
-                    time.sleep(delay)
-                    continue
+                    print(f"[Similarity] Error calculating similarity using {similarity_method} method: {e}")
+                    traceback.print_exc()
+                    overall_similarity = 0
+                    answer3_vehicle_info = {}
+            
+            # Use GPT-based evaluation for answer2 method or if enable_gpt_evaluation is True
+            elif similarity_method == "answer2" and (not conf or getattr(conf, "enable_gpt_evaluation", True)):
+                # Keep calling GPT until we obtain a valid JSON response with a numeric similarity.
+                MAX_GPT_RETRIES = 5
+                gpt_retry_count = 0
+                base_delay = 5  # seconds
 
-                # Persist GPT conversation log if configured (enhanced with more metadata)
-                try:
-                    log_dir = getattr(conf, "gpt_log_dir", "./data/gpt_logs")
-                    os.makedirs(log_dir, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    log_name = f"gpt_gen{ind.generation_id:05}_scen{ind.scenario_id:05}_{ts}.json"
-                    log_path = os.path.join(log_dir, log_name)
-                    
-                    # Get token usage statistics if available
-                    token_stats = {}
-                    try:
-                        from experiments.core.token_tracker import get_tracker
-                        tracker = get_tracker()
-                        stats = tracker.get_stats()
-                        # Get latest model stats (using configured default model)
-                        default_model = gpt.DEFAULT_MODEL if hasattr(gpt, 'DEFAULT_MODEL') else 'gpt-4o-mini'
-                        if default_model in stats.get('by_model', {}):
-                            model_stats = stats['by_model'][default_model]
-                            token_stats = {
-                                "cumulative_prompt_tokens": model_stats.get('prompt_tokens', 0),
-                                "cumulative_completion_tokens": model_stats.get('completion_tokens', 0),
-                                "cumulative_total_tokens": model_stats.get('total_tokens', 0),
-                                "cumulative_call_count": model_stats.get('call_count', 0),
-                                "cumulative_input_cost_usd": model_stats.get('input_cost_usd', 0.0),
-                                "cumulative_output_cost_usd": model_stats.get('output_cost_usd', 0.0),
-                                "cumulative_total_cost_usd": model_stats.get('total_cost_usd', 0.0)
-                            }
-                    except Exception as token_err:
-                        print(f"[WARNING] Could not retrieve token stats: {token_err}")
-                    
-                    # Get scenario state information
-                    # 注意：不能直接序列化 fitness 对象，需要转换为可序列化的格式
-                    fitness_info = None
-                    fitness_values = None
-                    if hasattr(ind, 'fitness') and ind.fitness is not None:
+                while gpt_retry_count < MAX_GPT_RETRIES:
+                    # Use RAG to retrieve relevant scenarios if enabled, otherwise use Scenario_database
+                    if conf and conf.enable_rag:
                         try:
-                            # 提取 fitness values（元组）
-                            if hasattr(ind.fitness, 'values') and ind.fitness.values is not None:
-                                fitness_values = list(ind.fitness.values) if isinstance(ind.fitness.values, tuple) else ind.fitness.values
-                            # 创建可序列化的 fitness 信息字典
-                            fitness_info = {
-                                "values": fitness_values,
-                                "valid": getattr(ind.fitness, 'valid', None),
-                                "weights": getattr(ind.fitness, 'weights', None),
-                            }
-                        except Exception as fit_err:
-                            print(f"[WARNING] Could not extract fitness info: {fit_err}")
-                            fitness_info = {"error": str(fit_err)}
+                            if conf.use_enhanced_rag:
+                                from rag_module import EnhancedRAGEngine
+                                if not hasattr(evaluation, 'rag_engine'):
+                                    evaluation.rag_engine = EnhancedRAGEngine(
+                                        top_k=conf.rag_k,
+                                        use_hybrid_search=conf.use_hybrid_search,
+                                        hybrid_alpha=conf.hybrid_alpha,
+                                        use_reranking=conf.use_reranking,
+                                        reranker_model=conf.reranker_model
+                                    )
+                                    evaluation.rag_engine.initialize(load_mock_data=True)
+                            else:
+                                from rag_module import RAGEngine
+                                if not hasattr(evaluation, 'rag_engine'):
+                                    evaluation.rag_engine = RAGEngine(top_k=conf.rag_k)
+                                    evaluation.rag_engine.initialize(load_mock_data=True)
+
+                            scenario_dict_str = evaluation.rag_engine.retrieve_and_format_for_prompt(
+                                scenario_description, k=conf.rag_k
+                            )
+                        except Exception as e:
+                            print(f"[RAG] Warning: RAG retrieval failed, falling back to Scenario_database: {e}")
+                            with _scenario_db_lock:
+                                scenario_dict_str = str(Scenario_database)
+                    else:
+                        with _scenario_db_lock:
+                            scenario_dict_str = str(Scenario_database)
+
+                    question = prompt + "\n scenario snapshot:\n" + str(
+                        scenario_description + "\n___\n Scenario-dict\n" + scenario_dict_str)
+
+                    gpt_call_start_time = time.time()
+                    gpt_call_timestamp = datetime.now().isoformat()
+                    response = gpt.call_gpt(question, model_version=None, max_tokens=10000)
+                    gpt_call_end_time = time.time()
+                    gpt_call_duration = gpt_call_end_time - gpt_call_start_time
+
+                    print("Response:", response)
+                    response_json = gpt.extract_json(response)
+
+                    if response_json is None:
+                        gpt_retry_count += 1
+                        if gpt_retry_count >= MAX_GPT_RETRIES:
+                            print(f"[GPT] Failed to extract JSON response after {MAX_GPT_RETRIES} attempts. Using default similarity score.")
+                            overall_similarity = 0
+                            break
+                        delay = base_delay * (2 ** (gpt_retry_count - 1))
+                        print(f"[GPT] Failed to extract JSON response, retrying ({gpt_retry_count}/{MAX_GPT_RETRIES}) after {delay}s...")
+                        time.sleep(delay)
+                        continue
+
+                    try:
+                        overall_similarity = int(gpt.get_overall_similarity(response_json))
+                    except Exception as e:
+                        gpt_retry_count += 1
+                        if gpt_retry_count >= MAX_GPT_RETRIES:
+                            print(f"[GPT] Failed to obtain overall similarity after {MAX_GPT_RETRIES} attempts. Using default similarity score.")
+                            overall_similarity = 0
+                            break
+                        delay = base_delay * (2 ** (gpt_retry_count - 1))
+                        print(f"[GPT] Failed to obtain overall similarity from JSON, retrying ({gpt_retry_count}/{MAX_GPT_RETRIES}) after {delay}s: {e}")
+                        time.sleep(delay)
+                        continue
+
+                    # Persist GPT conversation log if configured
+                    try:
+                        log_dir = getattr(conf, "gpt_log_dir", "./data/gpt_logs")
+                        os.makedirs(log_dir, exist_ok=True)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        log_name = f"gpt_gen{ind.generation_id:05}_scen{ind.scenario_id:05}_{ts}.json"
+                        log_path = os.path.join(log_dir, log_name)
+
+                        token_stats = {}
+                        try:
+                            from experiments.core.token_tracker import get_tracker
+                            tracker = get_tracker()
+                            stats = tracker.get_stats()
+                            default_model = gpt.DEFAULT_MODEL if hasattr(gpt, 'DEFAULT_MODEL') else 'gpt-4o-mini'
+                            if default_model in stats.get('by_model', {}):
+                                model_stats = stats['by_model'][default_model]
+                                token_stats = {
+                                    "cumulative_prompt_tokens": model_stats.get('prompt_tokens', 0),
+                                    "cumulative_completion_tokens": model_stats.get('completion_tokens', 0),
+                                    "cumulative_total_tokens": model_stats.get('total_tokens', 0),
+                                    "cumulative_call_count": model_stats.get('call_count', 0),
+                                    "cumulative_input_cost_usd": model_stats.get('input_cost_usd', 0.0),
+                                    "cumulative_output_cost_usd": model_stats.get('output_cost_usd', 0.0),
+                                    "cumulative_total_cost_usd": model_stats.get('total_cost_usd', 0.0)
+                                }
+                        except Exception as token_err:
+                            print(f"[WARNING] Could not retrieve token stats: {token_err}")
+
+                        fitness_info = None
+                        fitness_values = None
+                        if hasattr(ind, 'fitness') and ind.fitness is not None:
+                            try:
+                                if hasattr(ind.fitness, 'values') and ind.fitness.values is not None:
+                                    fitness_values = list(ind.fitness.values) if isinstance(ind.fitness.values, tuple) else ind.fitness.values
+                                fitness_info = {
+                                    "values": fitness_values,
+                                    "valid": getattr(ind.fitness, 'valid', None),
+                                    "weights": getattr(ind.fitness, 'weights', None),
+                                }
+                            except Exception as fit_err:
+                                print(f"[WARNING] Could not extract fitness info: {fit_err}")
+                                fitness_info = {"error": str(fit_err)}
+
+                        scenario_state_info = {
+                            "min_dist": getattr(ind.state, 'min_dist', None),
+                            "min_dist_frame": getattr(ind.state, 'min_dist_frame', None),
+                            "fitness_values": fitness_values,
+                            "fitness_info": fitness_info,
+                        }
+
+                        rag_info = {}
+                        if conf and conf.enable_rag and hasattr(evaluation, 'rag_engine'):
+                            try:
+                                retrieved_scenarios = evaluation.rag_engine.retrieve_relevant_scenarios(
+                                    scenario_description, k=conf.rag_k
+                                ) if hasattr(evaluation.rag_engine, 'retrieve_relevant_scenarios') else []
+                                rag_info = {
+                                    "rag_enabled": True,
+                                    "rag_k": conf.rag_k,
+                                    "retrieved_scenarios_count": len(retrieved_scenarios) if isinstance(retrieved_scenarios, list) else 0,
+                                    "use_enhanced_rag": getattr(conf, 'use_enhanced_rag', False),
+                                    "use_hybrid_search": getattr(conf, 'use_hybrid_search', False),
+                                    "use_reranking": getattr(conf, 'use_reranking', False),
+                                }
+                            except Exception as rag_err:
+                                rag_info = {"rag_enabled": True, "error": str(rag_err)}
+                        else:
+                            rag_info = {"rag_enabled": False}
+
+                        with open(log_path, "w", encoding="utf-8") as lf:
+                            json.dump(
+                                {
+                                    "generation_id": ind.generation_id,
+                                    "scenario_id": ind.scenario_id,
+                                    "timestamp": ts,
+                                    "iso_timestamp": gpt_call_timestamp,
+                                    "gpt_call_duration_seconds": round(gpt_call_duration, 3),
+                                    "model_version": gpt.DEFAULT_MODEL if hasattr(gpt, 'DEFAULT_MODEL') else 'gpt-4o-mini',
+                                    "max_tokens": 10000,
+                                    "prompt": question,
+                                    "prompt_length": len(question),
+                                    "raw_response": response,
+                                    "response_length": len(response),
+                                    "parsed_response": response_json,
+                                    "token_stats": token_stats,
+                                    "scenario_description": scenario_description,
+                                    "scenario_state": scenario_state_info,
+                                    "rag_info": rag_info,
+                                    "scenario_database_size": len(Scenario_database) if Scenario_database else 0,
+                                    "overall_similarity": overall_similarity if 'overall_similarity' in locals() else None,
+                                    "answer3_vehicle_info": answer3_vehicle_info if 'answer3_vehicle_info' in locals() else {},
+                                },
+                                lf,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                    except Exception as e:
+                        print(f"[WARNING] Failed to log GPT conversation: {e}")
+                        traceback.print_exc()
+
+                    try:
+                        with _scenario_db_lock:
+                            Scenario_database = gpt.add_answer1_to_database(response_json, Scenario_database, 30)
+                            if conf and getattr(conf, "scenario_db", None):
+                                _save_scenario_database(conf.scenario_db, Scenario_database)
+                    except Exception as e:
+                        print(f"[WARNING] Failed to update Scenario_database from GPT response: {e}")
                     
-                    scenario_state_info = {
-                        "min_dist": getattr(ind.state, 'min_dist', None),
-                        "min_dist_frame": getattr(ind.state, 'min_dist_frame', None),
-                        "fitness_values": fitness_values,  # 保留向后兼容
-                        "fitness_info": fitness_info,  # 完整的 fitness 信息（可序列化）
-                    }
-                    
-                    # Get RAG information if available
-                    rag_info = {}
                     if conf and conf.enable_rag and hasattr(evaluation, 'rag_engine'):
                         try:
-                            # Try to get retrieved scenarios info
-                            retrieved_scenarios = evaluation.rag_engine.retrieve_relevant_scenarios(
-                                scenario_description, k=conf.rag_k
-                            ) if hasattr(evaluation.rag_engine, 'retrieve_relevant_scenarios') else []
-                            rag_info = {
-                                "rag_enabled": True,
-                                "rag_k": conf.rag_k,
-                                "retrieved_scenarios_count": len(retrieved_scenarios) if isinstance(retrieved_scenarios, list) else 0,
-                                "use_enhanced_rag": getattr(conf, 'use_enhanced_rag', False),
-                                "use_hybrid_search": getattr(conf, 'use_hybrid_search', False),
-                                "use_reranking": getattr(conf, 'use_reranking', False),
-                            }
-                        except Exception as rag_err:
-                            rag_info = {"rag_enabled": True, "error": str(rag_err)}
-                    else:
-                        rag_info = {"rag_enabled": False}
-                    
-                    with open(log_path, "w", encoding="utf-8") as lf:
-                        json.dump(
-                            {
-                                # Basic identification
-                                "generation_id": ind.generation_id,
-                                "scenario_id": ind.scenario_id,
-                                "timestamp": ts,
-                                "iso_timestamp": gpt_call_timestamp,
-                                
-                                # GPT call metadata
-                                "gpt_call_duration_seconds": round(gpt_call_duration, 3),
-                                "model_version": gpt.DEFAULT_MODEL if hasattr(gpt, 'DEFAULT_MODEL') else 'gpt-4o-mini',
-                                "max_tokens": 10000,
-                                
-                                # Request/Response data
-                                "prompt": question,
-                                "prompt_length": len(question),
-                                "raw_response": response,
-                                "response_length": len(response),
-                                "parsed_response": response_json,
-                                
-                                # Token usage (from this call - approximate from response)
-                                "token_stats": token_stats,
-                                
-                                # Scenario context
-                                "scenario_description": scenario_description,
-                                "scenario_state": scenario_state_info,
-                                
-                                # RAG information
-                                "rag_info": rag_info,
-                                
-                                # Scenario database info
-                                "scenario_database_size": len(Scenario_database) if Scenario_database else 0,
-                                
-                                # Evaluation results
-                                "overall_similarity": overall_similarity if 'overall_similarity' in locals() else None,
-                                "answer3_vehicle_info": answer3_vehicle_info if 'answer3_vehicle_info' in locals() else {},
-                            },
-                            lf,
-                            ensure_ascii=False,
-                            indent=2,
-                        )
-                except Exception as e:
-                    print(f"[WARNING] Failed to log GPT conversation: {e}")
-                    traceback.print_exc()
+                            answer1_desc = response_json.get("answer1", {}).get("Description", "")
+                            if answer1_desc:
+                                evaluation.rag_engine.add_scenario_to_knowledge_base({
+                                    'id': f'gpt_gen_{ind.generation_id}_scen_{ind.scenario_id}',
+                                    'description': answer1_desc
+                                }, rebuild_index=False)
+                        except Exception as e:
+                            print(f"[RAG] Warning: Failed to add to RAG knowledge base: {e}")
 
-                # Update Scenario_database (for backward compatibility and fallback)
-                # Use lock to protect concurrent access
-                try:
-                    with _scenario_db_lock:
-                        Scenario_database = gpt.add_answer1_to_database(response_json, Scenario_database, 30)
-                        # Persist Scenario_database
-                        if conf and getattr(conf, "scenario_db", None):
-                            _save_scenario_database(conf.scenario_db, Scenario_database)
-                except Exception as e:
-                    print(f"[WARNING] Failed to update Scenario_database from GPT response: {e}")
-                
-                # Also add to RAG knowledge base if enabled
-                if conf and conf.enable_rag and hasattr(evaluation, 'rag_engine'):
-                    try:
-                        answer1_desc = response_json.get("answer1", {}).get("Description", "")
-                        if answer1_desc:
-                            evaluation.rag_engine.add_scenario_to_knowledge_base({
-                                'id': f'gpt_gen_{ind.generation_id}_scen_{ind.scenario_id}',
-                                'description': answer1_desc
-                            }, rebuild_index=False)
-                    except Exception as e:
-                        print(f"[RAG] Warning: Failed to add to RAG knowledge base: {e}")
+                    answer3_vehicle_info = gpt.get_answer3_vehicle_info(response_json)
+                    print("Overall Similarity:", overall_similarity)
+                    print("Answer3 Vehicle Info:", answer3_vehicle_info)
+                    break
 
-                # If we reach here, we have a valid similarity score and can break
-                answer3_vehicle_info = gpt.get_answer3_vehicle_info(response_json)
-                print("Overall Similarity:", overall_similarity)
-                print("Answer3 Vehicle Info:", answer3_vehicle_info)
-                break  # Successfully obtained response, exit retry loop
-            
-            # If we exhausted all retries without success, use default values
-            if gpt_retry_count >= MAX_GPT_RETRIES and 'overall_similarity' not in locals():
-                print(f"[GPT] All {MAX_GPT_RETRIES} retry attempts failed. Using default values.")
-                overall_similarity = 0
-                answer3_vehicle_info = {}
+                if gpt_retry_count >= MAX_GPT_RETRIES and 'overall_similarity' not in locals():
+                    print(f"[GPT] All {MAX_GPT_RETRIES} retry attempts failed. Using default values.")
+                    overall_similarity = 0
+                    answer3_vehicle_info = {}
         
         # Ensure overall_similarity is set (for non-GPT methods it's already set in the if branch above)
         if 'overall_similarity' not in locals():
@@ -961,7 +971,13 @@ def evaluation(ind: Scenario):
     # For GPT-enabled runs we only exit the loop when a valid numeric
     # overall_similarity has been obtained. For GPT-disabled runs
     # (e.g., TM-Fuzzer baseline) this remains at its default 0.
-    return min_dist, nova, 100 - overall_similarity
+    # Normalize objectives to keep GA scales comparable.
+    norm_min_dist, norm_nova, norm_similarity = _normalize_objectives(
+        min_dist=min_dist,
+        nova=nova,
+        similarity_score=overall_similarity
+    )
+    return norm_min_dist, norm_nova, norm_similarity
 
 
 # MUTATION OPERATOR
@@ -1002,8 +1018,12 @@ def mut_npc_list(ind: Scenario):
                         npc.spawn_point = waypoint
                     return ind.npc_list
         return ind.npc_list
+    # 过滤掉“占位”NPC（is_skip_token），仅对真实车辆做变异
+    valid_indices = [i for i, npc in enumerate(ind.npc_list) if not getattr(npc, "is_skip_token", False)]
+    if len(valid_indices) == 0:
+        return ind.npc_list
     mut_pb = random.random()
-    random_index = random.randint(0, len(ind.npc_list) - 1)
+    random_index = random.choice(valid_indices)
     # remove a random 1
     if mut_pb < 0.1:
         ind.npc_list.pop(random_index)
@@ -2040,12 +2060,18 @@ def main(args=None):
         fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
+        # Ensure every offspring individual has a valid 3-tuple fitness
+        for ind in offspring:
+            _ensure_fitness_valid(ind)
         hof.update(offspring)
         # Update global state
         _ga_state['hof'] = hof
 
         # Select the next generation population
         population[:] = toolbox.select(population + offspring, POP_SIZE)
+        # Guard against invalid fitness after selection (e.g., legacy checkpoints)
+        for ind in population:
+            _ensure_fitness_valid(ind)
         # Update global state with current population
         _ga_state['population'] = population
         record = stats.compile(population)

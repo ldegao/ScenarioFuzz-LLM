@@ -173,6 +173,13 @@ class Config:
         self.enable_rag = False
         self.rag_k = 5  # Number of top-k scenarios to retrieve
         self.rag_config_path = "./config/rag_config.json"
+        # Similarity / feature configuration (used by SimilarityComparison)
+        self.similarity_scoring_method = "answer2"
+        self.hybrid_embedding_weight = 0.6
+        self.feature_position_weight = 0.3
+        self.feature_speed_weight = 0.3
+        self.feature_angular_accel_weight = 0.2
+        self.feature_relative_position_weight = 0.2
         
         # Enhanced RAG configuration
         self.use_enhanced_rag = False  # Use EnhancedRAGEngine instead of RAGEngine

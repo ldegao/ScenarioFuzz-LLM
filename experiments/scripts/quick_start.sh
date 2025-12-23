@@ -4,6 +4,16 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../.."
+DB_PATH="./data/scenario_db.json"
+
+clean_scenario_db() {
+    if [ -f "$DB_PATH" ]; then
+        rm -f "$DB_PATH"
+        echo "[INFO] 清空 RAG 场景库：$DB_PATH"
+    else
+        echo "[INFO] RAG 场景库为空：$DB_PATH"
+    fi
+}
 
 echo "=========================================="
 echo "RAG-ScenarioFuzz Quick Start"
@@ -42,23 +52,29 @@ case $choice in
     2)
         echo ""
         echo "Running small test (10 scenarios per method)..."
-        python -m experiments.runners.run_tmfuzzer \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method tmfuzzer \
           --num-scenarios 10 \
           --target autoware \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --timeout 300
 
-        python -m experiments.runners.run_scenariofuzz_llm \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method scenariofuzz-llm \
           --num-scenarios 10 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60 \
           --debug
 
-        python -m experiments.runners.run_rag_scenariofuzz \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method rag-scenariofuzz \
           --num-scenarios 10 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60 \
@@ -68,22 +84,28 @@ case $choice in
     3)
         echo ""
         echo "Running medium experiment (50 scenarios per method)..."
-        python -m experiments.runners.run_tmfuzzer \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method tmfuzzer \
           --num-scenarios 50 \
           --target autoware \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --timeout 300
 
-        python -m experiments.runners.run_scenariofuzz_llm \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method scenariofuzz-llm \
           --num-scenarios 50 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60
 
-        python -m experiments.runners.run_rag_scenariofuzz \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method rag-scenariofuzz \
           --num-scenarios 50 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60 \
@@ -92,22 +114,28 @@ case $choice in
     4)
         echo ""
         echo "Running full experiment (100 scenarios per method)..."
-        python -m experiments.runners.run_tmfuzzer \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method tmfuzzer \
           --num-scenarios 100 \
           --target autoware \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --timeout 300
 
-        python -m experiments.runners.run_scenariofuzz_llm \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method scenariofuzz-llm \
           --num-scenarios 100 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60
 
-        python -m experiments.runners.run_rag_scenariofuzz \
+        clean_scenario_db
+        python -m experiments.cli run \
+          --method rag-scenariofuzz \
           --num-scenarios 100 \
-          --output-root ./experiment_results \
+          --output-root ./experiments/runs \
           --target behavior \
           --town 3 \
           --timeout 60 \
@@ -118,41 +146,53 @@ case $choice in
         echo "Running timed experiment (2 hours)..."
         read -p "Select method [RAG-ScenarioFuzz/ScenarioFuzz-LLM/all]: " method
         if [[ "$method" == "all" ]]; then
-            python -m experiments.runners.run_tmfuzzer \
+            clean_scenario_db
+            python -m experiments.cli run \
+              --method tmfuzzer \
               --hours 2 \
               --target autoware \
-              --output-root ./experiment_results
+              --output-root ./experiments/runs
 
-            python -m experiments.runners.run_scenariofuzz_llm \
+            clean_scenario_db
+            python -m experiments.cli run \
+              --method scenariofuzz-llm \
               --hours 2 \
               --target behavior \
-              --output-root ./experiment_results
+              --output-root ./experiments/runs
 
-            python -m experiments.runners.run_rag_scenariofuzz \
+            clean_scenario_db
+            python -m experiments.cli run \
+              --method rag-scenariofuzz \
               --hours 2 \
               --target behavior \
-              --output-root ./experiment_results \
+              --output-root ./experiments/runs \
               --rag-k 5
         else
             case "$method" in
                 "ScenarioFuzz-LLM")
-                    python -m experiments.runners.run_scenariofuzz_llm \
+                    clean_scenario_db
+                    python -m experiments.cli run \
+                      --method scenariofuzz-llm \
                       --hours 2 \
                       --target behavior \
-                      --output-root ./experiment_results
+                      --output-root ./experiments/runs
                     ;;
                 "RAG-ScenarioFuzz")
-                    python -m experiments.runners.run_rag_scenariofuzz \
+                    clean_scenario_db
+                    python -m experiments.cli run \
+                      --method rag-scenariofuzz \
                       --hours 2 \
                       --target behavior \
-                      --output-root ./experiment_results \
+                      --output-root ./experiments/runs \
                       --rag-k 5
                     ;;
                 "TM-Fuzzer")
-                    python -m experiments.runners.run_tmfuzzer \
+                    clean_scenario_db
+                    python -m experiments.cli run \
+                      --method tmfuzzer \
                       --hours 2 \
                       --target autoware \
-                      --output-root ./experiment_results
+                      --output-root ./experiments/runs
                     ;;
                 *)
                     echo "Unknown method: $method"

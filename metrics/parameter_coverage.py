@@ -42,29 +42,35 @@ class BehaviorParameterCoverage:
             Dictionary mapping parameter names to their discrete bin values
         """
         return {
-            # Longitudinal acceleration: [-6, +4] m/s², bin size 1 m/s²
+            # Longitudinal acceleration: [-6, +4] m/s²
+            # Enhanced resolution: 0.5 m/s² bins (仍符合标准范围)
             # Source: ISO 15622 / UNECE Reg.79
-            'a_long': list(range(-6, 5)),  # -6 to +4 m/s², 11 bins
+            'a_long': [x * 0.5 for x in range(-12, 9)],  # -6 to +4 m/s², 21 bins
             
-            # Lateral acceleration: [-4, +4] m/s², bin size 1 m/s²
+            # Lateral acceleration: [-4, +4] m/s²
+            # Enhanced resolution: 0.5 m/s² bins
             # Source: ISO 3888-1/2
-            'a_lat': list(range(-4, 5)),  # -4 to +4 m/s², 9 bins
+            'a_lat': [x * 0.5 for x in range(-8, 9)],  # -4 to +4 m/s², 17 bins
             
-            # Longitudinal jerk: [-3, +3] m/s³, bin size 1 m/s³
+            # Longitudinal jerk: [-3, +3] m/s³
+            # Enhanced resolution: 0.5 m/s³ bins
             # Source: UNECE braking test
-            'jerk_long': list(range(-3, 4)),  # -3 to +3 m/s³, 7 bins
+            'jerk_long': [x * 0.5 for x in range(-6, 7)],  # -3 to +3 m/s³, 13 bins
             
-            # Lateral jerk: [-2, +2] m/s³, bin size 1 m/s³
+            # Lateral jerk: [-2, +2] m/s³
+            # Enhanced resolution: 0.5 m/s³ bins
             # Source: ISO lane-change tests
-            'jerk_lat': list(range(-2, 3)),  # -2 to +2 m/s³, 5 bins
+            'jerk_lat': [x * 0.5 for x in range(-4, 5)],  # -2 to +2 m/s³, 9 bins
             
-            # Yaw rate: 0-200 deg/s, bin size 20 deg/s
+            # Yaw rate: 0-200 deg/s
+            # Enhanced resolution: 10 deg/s bins（仍在ISO 7401范围内）
             # Source: ISO 7401 (steady-state steering)
-            'yaw_rate': list(range(0, 201, 20)),  # 0, 20, 40, ..., 200 deg/s, 11 bins
+            'yaw_rate': list(range(0, 201, 10)),  # 0, 10, 20, ..., 200 deg/s, 21 bins
             
-            # TTC: 0-3 seconds, bin size 0.5 seconds
+            # TTC: 0-3 seconds
+            # Enhanced resolution: 0.25s bins（仍符合EuroNCAP区间）
             # Source: EuroNCAP AEB standard
-            'ttc': [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]  # 7 bins
+            'ttc': [x * 0.25 for x in range(13)]  # 0.0,0.25,...,3.0 (13 bins)
         }
     
     def _discretize_value(self, value: float, bins: List[float]) -> float:

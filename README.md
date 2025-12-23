@@ -14,16 +14,31 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 
 ![framework_overview](./images/framework.png)
 
+## Post-Paper Updates
+
+- **Offline metric computation**: Metrics are now computed offline. Use `python -m experiments.analysis.calculate_metrics` on `queue/` scenarios to regenerate BPC/DBCC/DPD/BCM; supports incremental or full recomputation.
+- **GPT API compatibility**: Supports OpenAI Responses API and GPT-5 with richer error diagnostics; video/image persistence is disabled by default to save disk space.
+- **Experiment management & token tracking**: TokenTracker aggregates per-model token usage into `token_usage.json`; experiment/archive directories are deduplicated, and a cleanup script handles failed experiment folders (`experiments/analysis/delete_failed_experiments.sh`).
+- **Analysis & reporting toolchain**: `experiments/aggregation` and `experiments/analysis` provide metric aggregation, comparisons/correlation/efficiency analysis, and similarity-comparison batch scripts.
+- **Metric naming alignment**: Metrics are standardized to BPC/DBCC/DPD/BCM (aligned with ISO 34502, UNECE, EuroNCAP). Outputs remain in the legacy keys `pc/pec/tcd/bcm` for backward compatibility—these map to BPC/DBCC/DPD/BCM.
+- **Unified CLI interface**: New unified CLI (`experiments/cli.py`) provides a single entry point for all experiments with `run`, `metrics`, `aggregate`, and `report` subcommands, simplifying experiment execution workflow.
+- **Ablation study support**: Added `--disable-similarity` and `--disable-guided-mutation` flags for ablation experiments to isolate the impact of similarity scoring and GPT-guided mutation components.
+- **Core improvements**: Fixed Scenario fitness serialization issues ensuring instance independence; optimized NPC generation with `spawn_skip_budget` mechanism to handle consecutive spawn failures; added ego vehicle kinematics recording (yaw, yaw_rate, lateral/longitudinal speeds) for more accurate metric computation.
+- **RAG module optimization**: Implemented lazy loading for SentenceTransformer and CrossEncoder to avoid heavy imports during test collection, improving test performance and reducing startup overhead.
+
 ## Key Features
 
 - **LLM-Guided Mutation**: ScenarioFuzz-LLM incorporates LLMs as expert agents to guide mutations when the genetic algorithm encounters stagnation, enhancing the diversity of testing scenarios.
 - **RAG-Enhanced Generation**: New RAG (Retrieval-Augmented Generation) module provides semantic search and context-aware scenario generation for improved diversity.
+- **GPT API compatibility & debugging**: Supports OpenAI Responses API / GPT-5 with improved error handling and logging; video/image saving is disabled by default to reduce resource usage.
+- **Token usage tracking & archive hygiene**: TokenTracker aggregates per-model token usage (`token_usage.json` output); experiment directories are uniquified and include a cleanup script for failed runs.
 - **Multi-Dimensional Evaluation**: Four evaluation metrics (BPC, DBCC, DPD, BCM) provide comprehensive coverage assessment based on industry standards:
   - **BPC (Behavior Parameter Coverage)**: Behavior parameter space combination coverage with logarithmic normalization
   - **DBCC (Driving Behavior Category Coverage)**: ISO 34502 behavior taxonomy coverage
   - **DPD (Driving Pattern Diversity)**: Trajectory pattern diversity using Fréchet distance and stabilized entropy normalization
   - **BCM (Behavior Matrix Coverage)**: Behavior combination coverage with logarithmic normalization
-- **Multi-Objective Optimization**: Evaluates scenarios based on metrics such as minimum vehicle distance, time-to-collision, and scenario variability to generate meaningful and diverse test cases.
+- **Offline Metrics Calculation**: Offline calculation pipeline decouples metric computation from fuzzing runs via `experiments/analysis/calculate_metrics.py` (incremental/full recompute supported).
+- **Multi-Objective Optimization**: Evaluates scenarios based on minimum vehicle distance, NOVA (speed variation), and dissimilarity (1 - similarity). GA objectives are normalized/clipped for scale balance: min distance clipped to 50m, NOVA to 20 m/s delta, similarity in [0,100] mapped to [0,1].
 - **Broad Edge Case Coverage**: Allows the testing framework to explore a wide array of potential ADS failures by continuously adapting and evolving test scenarios.
 - **Integration with CARLA Simulator**: Provides a comprehensive testing setup for ADS simulation using CARLA, making ScenarioFuzz-LLM compatible with the Autoware.ai platform.
 - **Experiment Continuation**: Continue interrupted experiments seamlessly by resuming from checkpoints with full state recovery (GA population, archive, seed).
@@ -37,6 +52,7 @@ This repository includes the following components:
 - **RAG Module**: Retrieval-augmented generation for semantic-enhanced scenario generation (`rag_module/`).
 - **Metrics Module**: Multi-dimensional evaluation metrics (BPC, DBCC, DPD, BCM) based on industry standards (`metrics/`).
 - **Visualization Module**: Tools for generating charts and reports (`visualization/`).
+- **Analysis & Reporting**: Offline metric calculation, aggregation, and analysis/report generation (`experiments/analysis/`, `experiments/aggregation/`).
 - **Experiments Package**: Reproducible paper experiments (ScenarioFuzz-LLM, RAG-ScenarioFuzz, TM-Fuzzer), with runners, progress tracking, aggregation and analysis (`experiments/`; see `experiments/docs/PAPER_EXPERIMENTS.md` and `experiments/docs/QUICK_START.md`).
 - **Pre-trained Models and Prompts**: Optimized prompts and models for guided scenario mutation and diversity evaluation.
 - **Data and Results**: Dataset for initial test cases, along with results and statistics of our experiments, demonstrating the effectiveness of ScenarioFuzz-LLM.
@@ -65,6 +81,18 @@ Four evaluation metrics provide comprehensive coverage assessment based on indus
 
 These metrics are automatically collected and aggregated in the new experiment pipeline (see `experiments/PAPER_EXPERIMENTS.md` for details).
 
+### Offline Metrics Calculation (new)
+
+- Metrics are now computed offline. After running experiments, generate BPC/DBCC/DPD/BCM from `queue/` scenarios:
+```bash
+python -m experiments.analysis.calculate_metrics \
+  --experiment-dir ./experiments/runs/ScenarioFuzz-LLM/ScenarioFuzz-LLM_20251203_210023 \
+  --incremental    # optional: only for new scenarios
+# add --recalculate to recompute everything
+```
+- Results are stored in `metrics/metrics_records.jsonl` and `metrics/metrics_summary.json` for downstream aggregation/reporting. Field names stay as `pc/pec/tcd/bcm` (legacy keys) and correspond to BPC/DBCC/DPD/BCM.
+- Legacy names (PC/PEC/TCD/BCM) remain supported for compatibility; use BPC/DBCC/DPD/BCM in documentation and analysis.
+
 ### Experiment Continuation and Reproducibility
 
 **Continue Interrupted Experiments**:
@@ -76,10 +104,11 @@ These metrics are automatically collected and aggregated in the new experiment p
 **Usage Example**:
 ```bash
 # Continue an existing experiment
-python -m experiments.runners.run_scenariofuzz_llm \
-  --continue-experiment ScenarioFuzz-LLM_20251203_210023 \
-  --continue-scenarios 50 \
-  --output-root ./experiment_results
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --name ScenarioFuzz-LLM_20251203_210023 \
+  --num-scenarios 50 \
+  --output-root ./experiments/runs
 ```
 
 **Enhanced Reproducibility**:
@@ -234,7 +263,7 @@ cd ./script
 
 ## Reproducing Paper Experiments (Sections 3.3–3.5)
 
-The recommended way to reproduce the experiments in the paper is to use the unified `experiments/` pipeline. It consists of three steps:
+The recommended way to reproduce the experiments in the paper is to use the unified `experiments/` pipeline. It consists of four steps:
 
 ### 1. Run three methods (ScenarioFuzz-LLM / RAG-ScenarioFuzz / TM-Fuzzer)
 
@@ -245,35 +274,52 @@ cd /path/to/ScenarioFuzz-LLM
 source venv/bin/activate        # or: source .venv/bin/activate
 
 # ScenarioFuzz-LLM (behavior model, quantitative example)
-python -m experiments.runners.run_scenariofuzz_llm \
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
   --num-scenarios 1000 \
-  --output-root ./experiment_results
+  --output-root experiments/runs
 
 # Continue an existing experiment (generate 50 more scenarios)
-python -m experiments.runners.run_scenariofuzz_llm \
-  --continue-experiment ScenarioFuzz-LLM_20251203_210023 \
-  --continue-scenarios 50 \
-  --output-root ./experiment_results
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --name ScenarioFuzz-LLM_20251203_210023 \
+  --num-scenarios 50 \
+  --output-root experiments/runs
 
 # RAG-ScenarioFuzz (behavior model, quantitative example)
-python -m experiments.runners.run_rag_scenariofuzz \
+python -m experiments.cli run \
+  --method rag-scenariofuzz \
   --num-scenarios 1000 \
-  --output-root ./experiment_results
+  --output-root experiments/runs
 
 # TM-Fuzzer baseline (Autoware target, quantitative example)
-python -m experiments.runners.run_tmfuzzer \
+python -m experiments.cli run \
+  --method tmfuzzer \
   --num-scenarios 1000 \
   --target autoware \
-  --output-root ./experiment_results
+  --output-root experiments/runs
 ```
 
 Each run creates a directory of the form:
 
-- `./experiment_results/<MethodName>/<experiment_id>/...`
+- `./experiments/runs/<MethodName>/<experiment_id>/...`
 
 where `<MethodName>` is one of `ScenarioFuzz-LLM`, `RAG-ScenarioFuzz`, or `TM-Fuzzer`.
 
-### 2. Aggregate metrics across all runs
+### 2. Compute metrics offline for each run
+
+After all runs finish, generate offline metrics (incremental or full) for each experiment directory:
+
+```bash
+# Example: offline metrics for a ScenarioFuzz-LLM run
+python -m experiments.analysis.calculate_metrics \
+  --experiment-dir ./experiments/runs/ScenarioFuzz-LLM/ScenarioFuzz-LLM_20251203_210023 \
+  --incremental
+```
+
+The resulting `metrics/metrics_summary.json` feeds subsequent aggregation and reports. Run this for each experiment directory if multiple runs exist.
+
+### 3. Aggregate metrics across all runs
 
 After the three methods have been run (possibly multiple times), aggregate the per-run metrics:
 
@@ -281,25 +327,51 @@ After the three methods have been run (possibly multiple times), aggregate the p
 python -m experiments.aggregation.main
 ```
 
-This scans `./experiment_results` for `metrics_summary.json` files and produces:
+This scans `./experiments/runs` for `metrics_summary.json` files and produces:
 
-- `./experiment_results/all_methods_results.json`
+- `./experiments/runs/all_methods_results.json`
 
 which contains all methods and runs in a single JSON structure.
+Note: summaries aggregated under `"Unknown"` indicate the source `metrics_summary.json` did not include a `method` field (e.g., produced by offline calculation). Add the method via `experiments.aggregation.metrics_aggregator` if needed.
 
-### 3. Generate figures and reports
+### 4. Run Experiment 3: Local Diversity Comparison (GPT-guided vs Random mutations)
+
+This experiment compares local diversity metrics (LMS/SED/OSCR) between GPT-guided and random mutations using the same seed set:
+
+```bash
+# One-command script (recommended)
+bash experiments/scripts/run_local_diversity_comparison.sh \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --determ-seed 42.0
+```
+
+The script automatically:
+1. Runs GPT-guided mutation experiment (ScenarioFuzz-LLM with default settings)
+2. Runs random mutation experiment (ScenarioFuzz-LLM with `--disable-guided-mutation`)
+3. Uses the same random seed (`--determ-seed`) to ensure both experiments start with the same initial seed set
+4. Compares local diversity metrics (LMS/SED/OSCR) and generates a comparison JSON
+
+Output: `./experiment_results/local_diversity_comparison.json` containing metrics for both methods and their differences.
+
+For manual step-by-step execution, see `experiments/docs/PAPER_EXPERIMENTS.md` section 9.
+
+### 5. Generate figures and reports
 
 Finally, generate figures and human-readable reports:
 
 ```sh
 # Figures (PC bar chart, multi-metric radar chart)
 python -m experiments.analysis.generate_figures \
-  --results-file ./experiment_results/all_methods_results.json \
+  --results-file ./experiments/runs/all_methods_results.json \
   --output-dir ./reports/figs
 
 # Markdown + JSON reports
 python -m experiments.analysis.generate_reports \
-  --results-file ./experiment_results/all_methods_results.json \
+  --results-file ./experiments/runs/all_methods_results.json \
   --output-dir ./reports \
   --experiment-name Thesis_Experiment
 ```
@@ -341,7 +413,7 @@ Use the batch script to automatically run all four methods:
 ```bash
 bash experiments/scripts/run_similarity_comparison.sh \
   --num-scenarios 1000 \
-  --output-root ./experiment_results
+  --output-root ./experiments/runs
 ```
 
 This will run all four methods sequentially, each generating the specified number of scenarios.
@@ -352,36 +424,40 @@ Run a specific similarity method:
 
 ```bash
 # LLM-based (answer2)
-python -m experiments.runners.run_similarity_comparison \
+python -m experiments.cli run \
+  --method similarity \
   --num-scenarios 1000 \
   --similarity-method answer2 \
-  --output-root ./experiment_results
+  --output-root ./experiments/runs
 
 # Embedding-based
-python -m experiments.runners.run_similarity_comparison \
+python -m experiments.cli run \
+  --method similarity \
   --num-scenarios 1000 \
   --similarity-method embedding \
-  --output-root ./experiment_results
+  --output-root ./experiments/runs
 
 # Feature-based
-python -m experiments.runners.run_similarity_comparison \
+python -m experiments.cli run \
+  --method similarity \
   --num-scenarios 1000 \
   --similarity-method feature \
-  --output-root ./experiment_results
+  --output-root ./experiments/runs
 
 # Hybrid
-python -m experiments.runners.run_similarity_comparison \
+python -m experiments.cli run \
+  --method similarity \
   --num-scenarios 1000 \
   --similarity-method hybrid \
   --hybrid-embedding-weight 0.6 \
-  --output-root ./experiment_results
+  --output-root ./experiments/runs
 ```
 
 #### Available Parameters
 
 - `--num-scenarios`: Number of scenarios to generate (required)
 - `--similarity-method`: Similarity scoring method (`answer2`, `embedding`, `feature`, `hybrid`)
-- `--output-root`: Output root directory (default: `./experiment_results`)
+- `--output-root`: Output root directory (default: `./experiments/runs`)
 - `--target`: Target ADS system (`behavior` or `autoware`, default: `behavior`)
 - `--town`: CARLA town number (default: 3)
 - `--timeout`: Scenario timeout in seconds (default: 60)
@@ -398,7 +474,7 @@ After running all methods, analyze and compare the results:
 
 ```bash
 python -m experiments.analysis.compare_similarity_methods \
-  --results-dir ./experiment_results/SimilarityComparison \
+  --results-dir ./experiments/runs/SimilarityComparison \
   --output-dir ./reports/similarity_comparison
 ```
 
@@ -412,7 +488,7 @@ This will generate:
 ### Output Structure
 
 ```
-experiment_results/
+experiments/runs/
   SimilarityComparison/
     SimilarityComparison_answer2_YYYYMMDD_HHMMSS/
       metrics_summary.json
@@ -427,6 +503,8 @@ experiment_results/
       metrics_summary.json
       ...
 ```
+
+> Reminder: if a similarity-comparison experiment directory lacks `metrics/metrics_summary.json`, run `python -m experiments.analysis.calculate_metrics --experiment-dir <experiment_dir> --incremental` to generate metrics before aggregation/reporting.
 
 ### Key Features
 

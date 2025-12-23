@@ -30,7 +30,10 @@ config.set_carla_api_path()
 try:
     import carla
 
-    print(carla.__file__)
+    # Some egg builds do not expose __file__; guard to avoid AttributeError
+    carla_file = getattr(carla, "__file__", None)
+    if carla_file:
+        print(carla_file)
 except ModuleNotFoundError as e:
     print("Carla module not found. Make sure you have built Carla.")
     proj_root = config.get_proj_root()
@@ -64,6 +67,43 @@ def record_closest_cars(npc_vehicles, player_loc, state):
         carla.Rotation(pitch=-90.0)
     )
     return utils.filter_vehicles_in_frustum(npc_vehicles, camera_tf, 105, 800, 600, 50)
+
+
+def calculate_control(npc_vehicles, npc_walkers, max_steer_angle, player, player_loc, player_rot, state, vel, yaw):
+    """
+    Record ego control/kinematics per frame:
+    - control inputs (throttle/brake/steer)
+    - steering angle
+    - yaw / yaw_rate
+    - lateral / longitudinal speeds (km/h)
+    Returns updated yaw for next frame.
+    """
+    control = player.get_control()
+    state.cont_throttle.append(control.throttle)
+    state.cont_brake.append(control.brake)
+    state.cont_steer.append(control.steer)
+    steer_angle = control.steer * max_steer_angle
+    state.steer_angle_list.append(steer_angle)
+    current_yaw = player_rot.yaw
+    state.yaw_list.append(current_yaw)
+    yaw_diff = current_yaw - yaw
+    # Normalize yaw_diff to avoid wrap-around artifacts
+    if yaw_diff > 180:
+        yaw_diff = 360 - yaw_diff
+    elif yaw_diff < -180:
+        yaw_diff = 360 + yaw_diff
+    yaw_rate = yaw_diff * c.FRAME_RATE
+    state.yaw_rate_list.append(yaw_rate)
+    yaw = current_yaw
+
+    # Lateral / longitudinal speed (km/h)
+    player_right_vec = player_rot.get_right_vector()
+    lat_speed = abs(vel.x * player_right_vec.x + vel.y * player_right_vec.y) * 3.6
+    state.lat_speed_list.append(lat_speed)
+    player_fwd_vec = player_rot.get_forward_vector()
+    lon_speed = abs(vel.x * player_fwd_vec.x + vel.y * player_fwd_vec.y) * 3.6
+    state.lon_speed_list.append(lon_speed)
+    return yaw
 
 
 def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
@@ -160,6 +200,7 @@ def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
                 )
             # simulate start here
             state.end = False
+            yaw = sp.rotation.yaw  # initialize yaw for per-frame yaw_rate calculation
             time_start = time.time()
             while True:
                 # world tick
@@ -181,8 +222,18 @@ def simulate(conf, state, exec_state, sp, wp, weather_dict, npc_list):
                 frame_speed_lim_changed, player_lane_id, player_loc, player_road_id, player_rot, speed, speed_limit, vel = get_player_info(
                     cur_frame_id, goal_loc, player, sp, state, town_map, conf)
 
-                # drive-fuzz's thing, not sure if we need it yaw = sp.rotation.yaw calculate_control(npc_vehicles,
-                # npc_walkers, max_steer_angle, player, player_loc, player_rot, state, vel, yaw)
+                # Record ego kinematics for metrics (yaw/yaw_rate, lat/lon speeds, controls)
+                yaw = calculate_control(
+                    npc_vehicles,
+                    npc_walkers,
+                    max_steer_angle,
+                    player,
+                    player_loc,
+                    player_rot,
+                    state,
+                    vel,
+                    yaw
+                )
 
                 # Check destination
                 break_flag, retval, autoware_stuck, s_started = check_destination(npc_vehicles, npc_now,
@@ -476,6 +527,9 @@ def control_npc(agents_now, speed_limit):
 def add_new_car(npc_list, npc_vehicles, npc_now, add_car_frame, agents_now, autoware_last_frames, conf, ego,
                 found_frame, frame_gap, goal_loc, goal_rot, max_wheels_for_non_motorized, player_lane_id, player_loc,
                 player_road_id, sensors, state, town_map, vehicle_bp_library, world, wp, G):
+    # 记录连续生成失败导致的“跳过配额”，避免下一轮提前生成
+    if not hasattr(state, 'spawn_skip_budget'):
+        state.spawn_skip_budget = 0
     if conf.agent_type == c.AUTOWARE:
         frame_gap = frame_gap + state.num_frames - autoware_last_frames
         autoware_last_frames = state.num_frames
@@ -484,6 +538,10 @@ def add_new_car(npc_list, npc_vehicles, npc_now, add_car_frame, agents_now, auto
             frame_gap = frame_gap - add_car_frame
     else:
         add_flag = state.num_frames % add_car_frame == add_car_frame - 1
+    # 如果上一轮记录了“应当跳过的一次生成”，在此消耗掉
+    if add_flag and state.spawn_skip_budget > 0:
+        state.spawn_skip_budget -= 1
+        return found_frame, autoware_last_frames, frame_gap
     if add_flag:
         # try to spawn a test linear car to see if the simulation is still running
         # a choose npc from npc_list first
@@ -497,14 +555,16 @@ def add_new_car(npc_list, npc_vehicles, npc_now, add_car_frame, agents_now, auto
                 repeat_times += 1
                 # stuck too long
                 if repeat_times > 100 or state.stuck_duration > 100:
-                    # add a fake npc
+                    # 记录一次生成窗口被浪费：插入安全的“跳过占位”NPC，保留时间轴/ID 序列
+                    dummy_tf = carla.Transform(player_loc, carla.Rotation(pitch=0, yaw=0, roll=0))
                     new_npc = NPC(npc_type=None,
-                                  spawn_point=None, speed=None,
+                                  spawn_point=dummy_tf, speed=None,
                                   npc_id=len(npc_list),
                                   ego_loc=player_loc)
                     new_npc.instance = None
-                    npc_list.append(new_npc)
                     new_npc.fresh = False
+                    new_npc.is_skip_token = True
+                    npc_list.append(new_npc)
                     break
                 x = random.uniform(-50, 50)
                 y = random.uniform(-50, 50)
@@ -602,6 +662,10 @@ def add_new_car(npc_list, npc_vehicles, npc_now, add_car_frame, agents_now, auto
 def add_old_npc(npc_list, npc_vehicles, npc_now, agents_now, conf, found_frame, max_wheels_for_non_motorized,
                 player_loc, sensors, state, vel, world, wp):
     for npc in npc_list:
+        # 跳过用于“占位”的虚拟 NPC，避免在后续流程中被当作可生成车辆
+        if getattr(npc, "is_skip_token", False):
+            npc.fresh = False
+            continue
         if npc.fresh & (npc.ego_loc.distance(player_loc) < 1.5):
             found_frame = state.num_frames
             # check if this npc is good to spawn

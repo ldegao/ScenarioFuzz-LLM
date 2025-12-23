@@ -2,7 +2,17 @@
 # Batch script for running similarity scoring method comparison experiments
 # Runs all four similarity methods (answer2, embedding, feature, hybrid) sequentially
 
-set -e
+set -u
+DB_PATH="./data/scenario_db.json"
+
+clean_scenario_db() {
+    if [ -f "$DB_PATH" ]; then
+        rm -f "$DB_PATH"
+        echo "[INFO] Cleared RAG scenario db: $DB_PATH"
+    else
+        echo "[INFO] RAG scenario db already empty: $DB_PATH"
+    fi
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../.."
@@ -102,6 +112,25 @@ mkdir -p "$OUTPUT_ROOT"
 # Array of similarity methods
 METHODS=("answer2" "embedding" "feature" "hybrid")
 
+run_with_retry() {
+    local desc="$1"; shift
+    local cmd="$@"
+    local retries=3
+    local attempt=0
+    echo ">>> Starting: ${desc}"
+    until eval "$cmd"; do
+        exit_code=$?
+        attempt=$((attempt + 1))
+        if [ $attempt -ge $retries ]; then
+            echo "!!! Failed: ${desc} (retried ${attempt} times, exit ${exit_code})"
+            return $exit_code
+        fi
+        echo "--- Retry ${attempt}/${retries}: ${desc} (exit ${exit_code}), wait 5s..."
+        sleep 5
+    done
+    echo "✓ Completed: ${desc}"
+}
+
 # Run each method
 for METHOD in "${METHODS[@]}"; do
     echo ""
@@ -110,15 +139,14 @@ for METHOD in "${METHODS[@]}"; do
     echo "=========================================="
     echo ""
     
-    # Build command
-    CMD="python -m experiments.runners.run_similarity_comparison"
-    CMD="$CMD --num-scenarios $NUM_SCENARIOS"
-    CMD="$CMD --similarity-method $METHOD"
-    CMD="$CMD --output-root $OUTPUT_ROOT"
-    CMD="$CMD --target $TARGET"
-    CMD="$CMD --town $TOWN"
-    CMD="$CMD --timeout $TIMEOUT"
-    CMD="$CMD --rag-k $RAG_K"
+    CMD="clean_scenario_db && python -m experiments.runners.run_similarity_comparison \
+        --num-scenarios $NUM_SCENARIOS \
+        --similarity-method $METHOD \
+        --output-root $OUTPUT_ROOT \
+        --target $TARGET \
+        --town $TOWN \
+        --timeout $TIMEOUT \
+        --rag-k $RAG_K"
     
     if [ "$METHOD" == "hybrid" ]; then
         CMD="$CMD --hybrid-embedding-weight $HYBRID_EMBEDDING_WEIGHT"
@@ -127,15 +155,7 @@ for METHOD in "${METHODS[@]}"; do
     echo "Command: $CMD"
     echo ""
     
-    # Run the command
-    if eval "$CMD"; then
-        echo ""
-        echo "✓ Completed: $METHOD"
-    else
-        echo ""
-        echo "✗ Failed: $METHOD"
-        echo "Continuing with next method..."
-    fi
+    run_with_retry "Similarity method: $METHOD" "$CMD"
     
     echo ""
     echo "Waiting 5 seconds before next method..."

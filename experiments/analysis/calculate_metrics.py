@@ -33,6 +33,7 @@ from experiments.aggregation.metrics_aggregator import (
     aggregate_run_metrics,
     save_run_summary
 )
+from experiments.analysis.local_diversity_metrics import summarize_local_diversity
 
 
 def calculate_metrics_from_scenarios(
@@ -74,7 +75,9 @@ def calculate_metrics_from_scenarios(
     # Load all scenarios
     print(f"[CalculateMetrics] Loading scenarios from {experiment_dir}")
     loader = ScenarioDataLoader()
-    scenarios = loader.load_all_scenarios(experiment_dir, prefer_pickle=True)
+    prefer_pickle_env = os.getenv("SCENARIO_LOADER_PREFER_PICKLE", "1")
+    prefer_pickle = prefer_pickle_env not in ("0", "false", "False")
+    scenarios = loader.load_all_scenarios(experiment_dir, prefer_pickle=prefer_pickle)
     
     if not scenarios:
         print(f"[CalculateMetrics] WARNING: No scenarios found in {experiment_dir}")
@@ -123,22 +126,22 @@ def calculate_metrics_from_scenarios(
     # But only save records for new scenarios
     all_scenarios_for_calculation = scenarios  # Use all scenarios for cumulative metrics
     
-    # Calculate metrics cumulatively
-    print(f"[CalculateMetrics] Calculating cumulative metrics using {len(all_scenarios_for_calculation)} scenarios")
+    # Helper to compute metrics for a list of scenarios (cumulative up to that point)
+    def _compute_metrics_for_subset(subset):
+        pc_val = ParameterCoverage().calculate_coverage(subset)
+        pec_val = BehaviorCoverage().calculate_coverage(subset)
+        tcd_res = TrajectoryDiversity().calculate_coverage(subset)
+        tcd_val = tcd_res.get('diversity_score', 0.0) if isinstance(tcd_res, dict) else float(tcd_res)
+        bcm_res = BehaviorMatrix().calculate_coverage(subset)
+        bcm_val = bcm_res.get('coverage_ratio', 0.0) if isinstance(bcm_res, dict) else float(bcm_res)
+        return pc_val, pec_val, tcd_val, bcm_val
     
-    pc_score = pc_calculator.calculate_coverage(all_scenarios_for_calculation)
-    pec_score = pec_calculator.calculate_coverage(all_scenarios_for_calculation)
-    tcd_results = tcd_calculator.calculate_coverage(all_scenarios_for_calculation)
-    tcd_score = tcd_results.get('diversity_score', 0.0)
-    bcm_results = bcm_calculator.calculate_coverage(all_scenarios_for_calculation)
-    bcm_score = bcm_results.get('coverage_ratio', 0.0)
+    print(f"[CalculateMetrics] Calculating cumulative and incremental metrics for {len(all_scenarios_for_calculation)} scenario(s)")
     
-    print(f"[CalculateMetrics] Calculated metrics: PC={pc_score:.4f}, PEC={pec_score:.4f}, TCD={tcd_score:.4f}, BCM={bcm_score:.4f}")
-    
-    # Save records for scenarios to calculate
-    # In cumulative mode, all scenarios get the same cumulative values
     records_to_save = []
     errors = []
+    
+    last_pc = last_pec = last_tcd = last_bcm = 0.0
     
     for scenario in scenarios_to_calculate:
         try:
@@ -147,15 +150,39 @@ def calculate_metrics_from_scenarios(
                 errors.append(f"Scenario gid:{getattr(scenario, 'generation_id', -1)} sid:{getattr(scenario, 'scenario_id', -1)} missing required state data")
                 continue
             
+            # 找到该场景在全量列表中的位置，确保增量计算正确
+            try:
+                scenario_pos = scenarios.index(scenario)
+            except ValueError:
+                scenario_pos = len(scenarios) - 1
+            
+            # Scenarios up to current (cumulative)
+            scenarios_so_far = scenarios[:scenario_pos + 1]
+            pc_cum, pec_cum, tcd_cum, bcm_cum = _compute_metrics_for_subset(scenarios_so_far)
+            
+            # Scenarios before current (for incremental contribution)
+            if scenario_pos > 0:
+                scenarios_before = scenarios[:scenario_pos]
+                pc_prev, pec_prev, tcd_prev, bcm_prev = _compute_metrics_for_subset(scenarios_before)
+            else:
+                pc_prev = pec_prev = tcd_prev = bcm_prev = 0.0
+            
             record = {
                 "generation_id": getattr(scenario, "generation_id", -1),
                 "scenario_id": getattr(scenario, "scenario_id", -1),
-                "pc": float(pc_score),
-                "pec": float(pec_score),
-                "tcd": float(tcd_score),
-                "bcm": float(bcm_score),
-                "num_accumulated_scenarios": len(all_scenarios_for_calculation),
+                # 累积值（保持向后兼容）
+                "pc": float(pc_cum),
+                "pec": float(pec_cum),
+                "tcd": float(tcd_cum),
+                "bcm": float(bcm_cum),
+                # 增量贡献（新增）
+                "pc_incremental": float(pc_cum - pc_prev),
+                "pec_incremental": float(pec_cum - pec_prev),
+                "tcd_incremental": float(tcd_cum - tcd_prev),
+                "bcm_incremental": float(bcm_cum - bcm_prev),
+                "num_accumulated_scenarios": len(scenarios_so_far),
             }
+            last_pc, last_pec, last_tcd, last_bcm = pc_cum, pec_cum, tcd_cum, bcm_cum
             records_to_save.append(record)
         except Exception as e:
             errors.append(f"Failed to process scenario gid:{getattr(scenario, 'generation_id', -1)} sid:{getattr(scenario, 'scenario_id', -1)}: {e}")
@@ -177,6 +204,10 @@ def calculate_metrics_from_scenarios(
     # Aggregate and save summary
     all_records = load_records_from_jsonl(str(records_path))
     summary = aggregate_run_metrics(all_records)
+
+    # 附加局部多样性指标（LMS/SED/OSCR）
+    local_diversity = summarize_local_diversity(scenarios)
+    summary.update(local_diversity)
     
     # Extract experiment ID from directory name
     experiment_id = experiment_dir.name
@@ -197,10 +228,13 @@ def calculate_metrics_from_scenarios(
         'num_calculated': len(records_to_save),
         'num_skipped': len(scenarios) - len(records_to_save),
         'metrics': {
-            'pc': float(pc_score),
-            'pec': float(pec_score),
-            'tcd': float(tcd_score),
-            'bcm': float(bcm_score)
+            'pc': float(last_pc),
+            'pec': float(last_pec),
+            'tcd': float(last_tcd),
+            'bcm': float(last_bcm),
+            'lms': float(local_diversity.get('lms', 0.0)),
+            'sed': float(local_diversity.get('sed', 0.0)),
+            'oscr': float(local_diversity.get('oscr', 0.0)),
         },
         'errors': errors
     }

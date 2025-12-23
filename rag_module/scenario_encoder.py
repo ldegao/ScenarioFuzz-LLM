@@ -6,8 +6,9 @@ This module now supports a small set of preset model names so that
 experiments can easily switch between different backbones.
 """
 
-from typing import List
+from typing import List, Optional
 import hashlib
+import importlib
 
 import numpy as np
 
@@ -46,9 +47,8 @@ class ScenarioEncoder:
         resolved_name = PRESET_MODELS.get(model_name, model_name)
         self.preset_key = model_name if model_name in PRESET_MODELS else None
         self.model_name = resolved_name
-        self.model = None
+        self.model: Optional[object] = None
         self.vector_dim = None
-        self._load_model()
 
     @classmethod
     def from_preset(cls, preset_name: str) -> "ScenarioEncoder":
@@ -61,11 +61,10 @@ class ScenarioEncoder:
         return cls(model_name=preset_name)
 
     def _load_model(self):
-        """Lazy load the Sentence-BERT model."""
+        """Lazy load the Sentence-BERT model (heavy import deferred)."""
         try:
-            from sentence_transformers import SentenceTransformer
-
-            self.model = SentenceTransformer(self.model_name)
+            st = _get_sentence_transformer()
+            self.model = st(self.model_name)
             # Get vector dimension by encoding a dummy text
             dummy_vector = self.model.encode("test", convert_to_numpy=True)
             self.vector_dim = int(len(dummy_vector))
@@ -74,7 +73,6 @@ class ScenarioEncoder:
                 f"vector_dim={self.vector_dim}"
             )
         except ImportError as e:
-            # Fail-fast: encoder requires sentence-transformers in normal usage.
             raise ImportError(
                 "[RAG] sentence-transformers is required for ScenarioEncoder"
             ) from e
@@ -94,10 +92,7 @@ class ScenarioEncoder:
             numpy array of shape (vector_dim,)
         """
         if self.model is None:
-            raise RuntimeError(
-                "[RAG] Encoder model is not loaded. "
-                "Ensure sentence-transformers is installed and _load_model() succeeded."
-            )
+            self._load_model()
         vector = self.model.encode(scenario_text, convert_to_numpy=True)
         return vector
 
@@ -113,11 +108,7 @@ class ScenarioEncoder:
             numpy array of shape (num_scenarios, vector_dim)
         """
         if self.model is None:
-            # Mock encoding for testing (should rarely be used in practice).
-            if self.vector_dim is None:
-                # Default to a small dimension if we truly have no model info.
-                self.vector_dim = 32
-            return np.array([self._mock_encode(s) for s in scenarios])
+            self._load_model()
 
         vectors = self.model.encode(
             scenarios,
@@ -144,6 +135,20 @@ class ScenarioEncoder:
     def get_vector_dim(self) -> int:
         """Get the dimension of encoded vectors."""
         if self.vector_dim is None:
+            # Lazily load to infer dimension
+            self._load_model()
+        if self.vector_dim is None:
             raise RuntimeError("[RAG] Encoder vector dimension is not initialized.")
         return int(self.vector_dim)
+
+
+def _get_sentence_transformer():
+    """
+    Lazily import SentenceTransformer to avoid heavy imports during test collection.
+    """
+    spec = importlib.util.find_spec("sentence_transformers")
+    if spec is None:
+        raise ImportError("[RAG] sentence-transformers is required for ScenarioEncoder")
+    module = importlib.import_module("sentence_transformers")
+    return module.SentenceTransformer
 

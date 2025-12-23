@@ -6,8 +6,16 @@ Tests for data migration and storage components:
 """
 
 import json
-
 import numpy as np
+import importlib.util
+import pytest
+
+HAS_FAISS = importlib.util.find_spec("faiss") is not None
+
+pytestmark = pytest.mark.skipif(
+    not HAS_FAISS,
+    reason="faiss not installed; skipping vector store persistence tests."
+)
 
 from rag_module import KnowledgeBase, VectorStore
 

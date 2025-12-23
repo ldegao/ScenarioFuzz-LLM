@@ -33,6 +33,55 @@ if str(PROJECT_ROOT) not in sys.path:
 from states import ScenarioState
 
 
+def _ensure_minimal_carla():
+    """
+    Provide minimal carla stubs when CARLA is absent or missing Location/Rotation/Transform.
+    This lets offline metrics loading succeed on pickle files that contain these objects.
+    Real CARLA (with full API) will not be modified.
+    """
+    try:
+        import carla  # type: ignore
+    except Exception:
+        # Create minimal module
+        class Location:
+            def __init__(self, x=0.0, y=0.0, z=0.0):
+                self.x, self.y, self.z = x, y, z
+        class Rotation:
+            def __init__(self, pitch=0.0, yaw=0.0, roll=0.0):
+                self.pitch, self.yaw, self.roll = pitch, yaw, roll
+        class Transform:
+            def __init__(self, location=None, rotation=None):
+                self.location = location or Location()
+                self.rotation = rotation or Rotation()
+        import types, sys as _sys
+        _sys.modules['carla'] = types.SimpleNamespace(
+            Location=Location, Rotation=Rotation, Transform=Transform
+        )
+        return
+    # If carla exists but missing attributes, patch minimal ones
+    missing = []
+    for attr in ("Location", "Rotation", "Transform"):
+        if not hasattr(carla, attr):
+            missing.append(attr)
+    if missing:
+        class Location:
+            def __init__(self, x=0.0, y=0.0, z=0.0):
+                self.x, self.y, self.z = x, y, z
+        class Rotation:
+            def __init__(self, pitch=0.0, yaw=0.0, roll=0.0):
+                self.pitch, self.yaw, self.roll = pitch, yaw, roll
+        class Transform:
+            def __init__(self, location=None, rotation=None):
+                self.location = location or Location()
+                self.rotation = rotation or Rotation()
+        if "Location" in missing:
+            carla.Location = Location  # type: ignore
+        if "Rotation" in missing:
+            carla.Rotation = Rotation  # type: ignore
+        if "Transform" in missing:
+            carla.Transform = Transform  # type: ignore
+
+
 class ScenarioDataLoader:
     """
     Loads scenario data from files for metrics calculation.
@@ -120,6 +169,9 @@ class ScenarioDataLoader:
             return None
         
         try:
+            # Ensure minimal CARLA types exist before unpickling
+            _ensure_minimal_carla()
+
             # Delay import to avoid CARLA dependency
             try:
                 from scenario import Scenario

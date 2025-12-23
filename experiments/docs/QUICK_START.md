@@ -32,24 +32,24 @@ python3 test.py behavior 0.4 3 120
 ```bash
 cd /path/to/ScenarioFuzz-LLM
 # 短测试：1 个场景，约 300 秒
-python -m experiments.runners.run_tmfuzzer \
+python -m experiments.cli run \
+  --method tmfuzzer \
   --num-scenarios 1 \
   --target autoware \
   --density 0.4 \
   --town 3 \
-  --timeout 300
+  --timeout 300 \
+  --output-root experiments/runs
 
 # 论文实验示例：100 个场景
-# python -m experiments.runners.run_tmfuzzer \
+# python -m experiments.cli run \
+#   --method tmfuzzer \
 #   --num-scenarios 100 \
 #   --target autoware \
 #   --density 0.4 \
 #   --town 3 \
-#   --timeout 300
-```
-```bash
-# 测试1个场景（至少300秒）
-python -m experiments.runners.run_tmfuzzer --num-scenarios 1 --target autoware
+#   --timeout 300 \
+#   --output-root experiments/runs
 ```
 
 ### 3. ScenarioFuzz-LLM（Behavior + 无 RAG，定量 N 场景）
@@ -57,18 +57,20 @@ python -m experiments.runners.run_tmfuzzer --num-scenarios 1 --target autoware
 cd /path/to/ScenarioFuzz-LLM
 
 # 短流程：1 个场景
-python -m experiments.runners.run_scenariofuzz_llm \
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
   --num-scenarios 1 \
-  --output-root ./experiment_results \
+  --output-root experiments/runs \
   --target behavior \
   --town 3 \
   --timeout 60 \
   --debug
 
 # 论文实验示例：100 个场景
-# python -m experiments.runners.run_scenariofuzz_llm \
+# python -m experiments.cli run \
+#   --method scenariofuzz-llm \
 #   --num-scenarios 100 \
-#   --output-root ./experiment_results \
+#   --output-root experiments/runs \
 #   --target behavior \
 #   --town 3 \
 #   --timeout 60
@@ -79,9 +81,10 @@ python -m experiments.runners.run_scenariofuzz_llm \
 cd /home/linshenghao/ScenarioFuzz-LLM
 
 # 短流程：1 个场景，用于验证 RAG 与 GPT 日志、场景库持久化
-python -m experiments.runners.run_rag_scenariofuzz \
+python -m experiments.cli run \
+  --method rag-scenariofuzz \
   --num-scenarios 1 \
-  --output-root ./experiment_results \
+  --output-root experiments/runs \
   --target behavior \
   --town 3 \
   --timeout 60 \
@@ -89,9 +92,10 @@ python -m experiments.runners.run_rag_scenariofuzz \
   --debug
 
 # 论文实验示例：100 个场景
-# python -m experiments.runners.run_rag_scenariofuzz \
+# python -m experiments.cli run \
+#   --method rag-scenariofuzz \
 #   --num-scenarios 100 \
-#   --output-root ./experiment_results \
+#   --output-root experiments/runs \
 #   --target behavior \
 #   --town 3 \
 #   --timeout 60 \
@@ -101,31 +105,66 @@ python -m experiments.runners.run_rag_scenariofuzz \
 ### 5. 批量测试（可选）
 ```bash
 # 测试所有方法（各 1 个场景，顺序执行）
-python -m experiments.runners.run_tmfuzzer \
-  --num-scenarios 1 \
-  --target autoware \
-  --output-root ./experiment_results \
-  --timeout 300
-
-python -m experiments.runners.run_scenariofuzz_llm \
-  --num-scenarios 1 \
-  --output-root ./experiment_results \
-  --target behavior \
-  --town 3 \
-  --timeout 60 \
-  --debug
-
-python -m experiments.runners.run_rag_scenariofuzz \
-  --num-scenarios 1 \
-  --output-root ./experiment_results \
-  --target behavior \
-  --town 3 \
-  --timeout 60 \
-  --rag-k 5 \
-  --debug
+python -m experiments.cli run --method tmfuzzer --num-scenarios 1 --target autoware --output-root experiments/runs --timeout 300
+python -m experiments.cli run --method scenariofuzz-llm --num-scenarios 1 --target behavior --output-root experiments/runs --town 3 --timeout 60 --debug
+python -m experiments.cli run --method rag-scenariofuzz --num-scenarios 1 --target behavior --output-root experiments/runs --town 3 --timeout 60 --rag-k 5 --debug
 ```
 
-### 6. 指标聚合与可视化（BPC / DBCC / DPD / BCM）
+### 6. 实验 3：局部变异多样性对比（GPT 指导 vs 随机）
+
+该实验在固定 seed 条件下专门分析局部变异行为，比较 GPT 指导变异与随机变异的局部多样性指标（LMS/SED/OSCR）。
+
+**一键运行脚本（推荐）**：
+```bash
+cd /path/to/ScenarioFuzz-LLM
+source venv/bin/activate
+
+# 运行实验3（自动运行两组实验并对比）
+bash experiments/scripts/run_local_diversity_comparison.sh \
+  --num-scenarios 1000 \
+  --output-root ./experiment_results \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --determ-seed 42.0
+```
+
+**手动分步执行**：
+```bash
+# 步骤 1: 运行 GPT 指导变异实验
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --num-scenarios 1000 \
+  --determ-seed 42.0 \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --output-root experiments/runs
+
+# 步骤 2: 运行随机变异实验（使用相同的随机种子）
+python -m experiments.cli run \
+  --method scenariofuzz-llm \
+  --num-scenarios 1000 \
+  --determ-seed 42.0 \
+  --target behavior \
+  --town 3 \
+  --timeout 60 \
+  --disable-guided-mutation \
+  --output-root experiments/runs
+
+# 步骤 3: 对比局部多样性指标
+python -m experiments.runners.run_local_diversity_comparison \
+  --gpt-dir ./experiment_results/ScenarioFuzz-LLM/<gpt_experiment_id> \
+  --rand-dir ./experiment_results/ScenarioFuzz-LLM/<random_experiment_id> \
+  --output ./experiment_results/local_diversity_comparison.json
+```
+
+**输出说明**：
+- 对比结果保存在 `./experiment_results/local_diversity_comparison.json`
+- 包含 GPT 和随机变异的 LMS/SED/OSCR 指标及差值
+- 前两组实验关注全局分布，实验3专门分析局部变异行为
+
+### 7. 指标聚合与可视化（BPC / DBCC / DPD / BCM）
 
 运行完各方法的实验后，可以按如下步骤做统一聚合与绘图：
 
@@ -135,17 +174,17 @@ source venv/bin/activate
 
 # 1) 收集所有实验的 metrics_summary.json，生成 all_methods_results.json
 python -m experiments.aggregation.main \
-  --root experiment_results \
-  --output experiment_results/all_methods_results.json
+  --root experiments/runs \
+  --output experiments/runs/all_methods_results.json
 
 # 2) 生成 BPC/DBCC/DPD/BCM 图像和综合雷达图
 python -m experiments.analysis.generate_figures \
-  --results-file experiment_results/all_methods_results.json \
+  --results-file experiments/runs/all_methods_results.json \
   --output-dir reports/figs
 
 # 3) 生成 Markdown 报告和 JSON 汇总
 python -m experiments.analysis.generate_reports \
-  --results-file experiment_results/all_methods_results.json \
+  --results-file experiments/runs/all_methods_results.json \
   --output-dir reports \
   --experiment-name Thesis_Experiment
 ```

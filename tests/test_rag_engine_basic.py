@@ -7,6 +7,16 @@ not available, so they should be lightweight and self-contained.
 """
 
 import pytest
+import importlib.util
+
+HAS_SENTENCE_TRANSFORMERS = importlib.util.find_spec("sentence_transformers") is not None
+HAS_FAISS = importlib.util.find_spec("faiss") is not None
+
+# Skip the whole module if optional heavy dependencies are missing
+pytestmark = pytest.mark.skipif(
+    not (HAS_SENTENCE_TRANSFORMERS and HAS_FAISS),
+    reason="sentence-transformers or faiss not installed; skipping RAG tests."
+)
 
 from rag_module import (
     KnowledgeBase,

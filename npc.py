@@ -29,6 +29,7 @@ class NPC:
     ego_loc: 'carla.Location'  # 使用字符串类型注解
     fresh: bool
     death_time: int
+    is_skip_token: bool
 
     sensor_collision: 'carla.Actor'  # 使用字符串类型注解
     sensor_lane_invasion: 'carla.Actor'  # 使用字符串类型注解
@@ -49,6 +50,8 @@ class NPC:
         self.sensor_lane_invasion = None
         self.stuck_duration = 0
         self.death_time = -1
+        # 标记是否为“跳过占位”用的虚拟 NPC，避免在变异/生成中被当作真实车辆
+        self.is_skip_token = False
 
     def __deepcopy__(self, memo):
         npc_copy = NPC(
@@ -173,6 +176,9 @@ class NPC:
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        # 兼容旧的序列化数据：未记录 is_skip_token 时，默认 False
+        if not hasattr(self, "is_skip_token"):
+            self.is_skip_token = False
         if state.get('ego_loc'):
             self.ego_loc = utils.carla_location_unpickle(state['ego_loc'])
         if state.get('spawn_point'):
@@ -220,6 +226,13 @@ class NPC:
         else:
             return True
 
+    def get_position(self):
+        """
+        Backward-compatible alias for get_position_now().
+        Some mutation routines (e.g., get_npc_by_one) call get_position; keep behavior identical.
+        """
+        return self.get_position_now()
+
     def get_position_now(self):
         if self.instance is None:
             if self.spawn_point is None:
@@ -235,8 +248,9 @@ class NPC:
                 raise ValueError(f"NPC {self.npc_id}: spawn_point is None and instance is None, cannot get speed")
             roll_degrees = self.spawn_point.rotation.roll
             roll_rad = math.radians(roll_degrees)
-            speed_x = self.speed * math.cos(roll_rad)
-            speed_y = self.speed * math.sin(roll_rad)
+            base_speed = 0.0 if self.speed is None else self.speed
+            speed_x = base_speed * math.cos(roll_rad)
+            speed_y = base_speed * math.sin(roll_rad)
             speed = carla.Vector3D(speed_x, speed_y, 0)
         else:
             speed = self.instance.get_velocity()
@@ -297,7 +311,9 @@ class NPC:
                 x = random.uniform(-5, 5)
             while -2 <= y <= 2:
                 y = random.uniform(-5, 5)
-            new_speed = npc.speed + random.uniform(-5, 5)
+            # Guard against None speed
+            base_speed = npc.speed if npc.speed is not None else 0.0
+            new_speed = base_speed + random.uniform(-5, 5)
             location = carla.Location(x=npc_loc.x + x, y=npc_loc.y + y, z=npc_loc.z)
             waypoint = town_map.get_waypoint(location, project_to_road=True,
                                              lane_type=carla.libcarla.LaneType.Driving)

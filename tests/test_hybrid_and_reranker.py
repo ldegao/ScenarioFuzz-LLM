@@ -6,6 +6,15 @@ end-to-end on small in-memory examples.
 """
 
 import numpy as np
+import importlib.util
+import pytest
+
+HAS_FAISS = importlib.util.find_spec("faiss") is not None
+
+pytestmark = pytest.mark.skipif(
+    not HAS_FAISS,
+    reason="faiss not installed; skipping hybrid retriever tests."
+)
 
 from rag_module import VectorStore
 from rag_module.hybrid_retriever import HybridRetriever, BM25Retriever

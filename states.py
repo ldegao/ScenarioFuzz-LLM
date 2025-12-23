@@ -84,6 +84,9 @@ class ScenarioState:
         self.autoware_goal = ""
         self.drawn_points = set()
 
+        # 记录“本轮应跳过的生成窗口”数量，用于跨轮重放生成失败
+        self.spawn_skip_budget = 0
+
     def sig_handler(self, signum, frame):
         print("[-] something happened: {}".format(signal.signum.name))
         self.other = True
