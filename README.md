@@ -336,26 +336,44 @@ Note: summaries aggregated under `"Unknown"` indicate the source `metrics_summar
 
 ### 4. Run Experiment 3: Local Diversity Comparison (GPT-guided vs Random mutations)
 
-This experiment compares local diversity metrics (LMS/SED/OSCR) between GPT-guided and random mutations using the same seed set:
+This experiment compares local diversity metrics (LMS/SED/OSCR) between GPT-guided and random mutations using the same seed set. **Note**: While Experiments 1-2 focus on global distribution metrics (BPC/DBCC/DPD/BCM), Experiment 3 specifically analyzes local mutation behavior under fixed seed conditions to isolate the impact of GPT-guided mutation.
+
+**Key Features**:
+- Uses the same random seed (`--determ-seed`) to ensure both experiments start with identical initial seed sets
+- Automatically runs GPT-guided mutation experiment (ScenarioFuzz-LLM with default settings)
+- Automatically runs random mutation experiment (ScenarioFuzz-LLM with `--disable-guided-mutation`)
+- Includes retry mechanism and error handling for robust execution
+- Automatically generates comparison JSON with local diversity metrics
+
+**One-command execution (recommended)**:
 
 ```bash
-# One-command script (recommended)
 bash experiments/scripts/run_local_diversity_comparison.sh \
   --num-scenarios 1000 \
-  --output-root ./experiment_results \
+  --output-root ./experiments/runs \
   --target behavior \
   --town 3 \
   --timeout 60 \
   --determ-seed 42.0
 ```
 
-The script automatically:
-1. Runs GPT-guided mutation experiment (ScenarioFuzz-LLM with default settings)
-2. Runs random mutation experiment (ScenarioFuzz-LLM with `--disable-guided-mutation`)
-3. Uses the same random seed (`--determ-seed`) to ensure both experiments start with the same initial seed set
-4. Compares local diversity metrics (LMS/SED/OSCR) and generates a comparison JSON
+**Output Structure**:
+```
+experiments/runs/
+  ScenarioFuzz-LLM/
+    <gpt_experiment_id>/          # GPT-guided mutation experiment
+      metrics_summary.json
+      ...
+    <random_experiment_id>/       # Random mutation experiment
+      metrics_summary.json
+      ...
+  local_diversity_comparison.json # Comparison results with LMS/SED/OSCR metrics
+```
 
-Output: `./experiment_results/local_diversity_comparison.json` containing metrics for both methods and their differences.
+The comparison JSON contains:
+- Local diversity metrics (LMS/SED/OSCR) for both methods
+- Difference analysis between GPT-guided and random mutations
+- Detailed statistics for each metric
 
 For manual step-by-step execution, see `experiments/docs/PAPER_EXPERIMENTS.md` section 9.
 
