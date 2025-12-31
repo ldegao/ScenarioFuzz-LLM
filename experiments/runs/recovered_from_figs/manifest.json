@@ -1,0 +1,15 @@
+{
+  "description": "Recovered aggregated metrics from experiment_results artifacts to compensate for deleted experiments/runs outputs. No raw per-scenario data is included.",
+  "sources": {
+    "all_methods_results.json": "experiment_results/all_methods_results.json",
+    "local_diversity/local_diversity_incremental.json": "experiment_results/local_diversity/local_diversity_incremental.json",
+    "similarity_comparison/comparison_report.json": "experiment_results/similarity_comparison_rag/comparison_report.json",
+    "similarity_comparison/comparison_report.md": "experiment_results/similarity_comparison_rag/comparison_report.md",
+    "similarity_comparison/comparison_figures": "experiment_results/similarity_comparison_rag/comparison_figures/"
+  },
+  "notes": [
+    "Data reconstructed only from aggregated metrics and existing figures; original per-scenario logs/metrics remain unavailable.",
+    "For full fidelity, re-run experiments per experiments/docs/EXPERIMENT_RUN_GUIDE.md."
+  ]
+}
+
