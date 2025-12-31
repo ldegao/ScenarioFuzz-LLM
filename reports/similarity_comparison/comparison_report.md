@@ -1,149 +1,149 @@
-# Similarity Scoring Method Comparison Report
+# 相似度评分方法对比报告
 
-This report compares four similarity scoring methods based on four diversity metrics.
+本报告基于四个多样性指标，对四类相似度评分方法进行对比。
 
-## Methods Compared
+## 方法
 
-- **LLM-based (Answer2)** (answer2)
-- **Embedding-based** (embedding)
-- **Feature-based** (feature)
-- **Hybrid** (hybrid)
+- **LLM 相似度 (Answer2)**（answer2）
+- **Embedding 相似度**（embedding）
+- **特征距离**（feature）
+- **混合策略**（hybrid）
 
-## Metrics
+## 指标
 
-- **Parameter Coverage (PC)** (PC)
-- **Behavior Coverage (PEC)** (PEC)
-- **Trajectory Diversity (TCD)** (TCD)
-- **Behavior Matrix (BCM)** (BCM)
+- **BPC（行为参数覆盖）**
+- **DBCC（行为类别覆盖）**
+- **DPD（轨迹多样性）**
+- **BCM（行为矩阵覆盖）**
 
-## Results Summary
+## 结果汇总（均值±标准差）
 
-| Method | PC (mean±std) | PEC (mean±std) | TCD (mean±std) | BCM (mean±std) | Runs |
-|--------|---------------|----------------|----------------|----------------|------|
-| LLM-based (Answer2) | 0.167±0.000 | 0.725±0.000 | 0.668±0.000 | 0.243±0.000 | 1 |
-| Embedding-based | 0.000±0.000 | 0.000±0.000 | 0.000±0.000 | 0.000±0.000 | 0 |
-| Feature-based | 0.125±0.000 | 0.633±0.000 | 0.855±0.000 | 0.191±0.000 | 1 |
-| Hybrid | 0.174±0.000 | 0.633±0.000 | 0.693±0.000 | 0.224±0.000 | 1 |
+| 方法 | BPC | DBCC | DPD | BCM | 运行次数 |
+|------|-----|------|-----|-----|---------|
+| LLM 相似度 (Answer2) | 0.167±0.000 | 0.725±0.000 | 0.668±0.000 | 0.243±0.000 | 1 |
+| Embedding 相似度 | 0.000±0.000 | 0.000±0.000 | 0.000±0.000 | 0.000±0.000 | 0 |
+| 特征距离 | 0.125±0.000 | 0.633±0.000 | 0.855±0.000 | 0.191±0.000 | 1 |
+| 混合策略 | 0.174±0.000 | 0.633±0.000 | 0.693±0.000 | 0.224±0.000 | 1 |
 
-## Detailed Statistics
+## 详细统计
 
-### LLM-based (Answer2)
+### LLM 相似度 (Answer2)
 
-**Parameter Coverage (PC)**:
-- Mean: 0.1669
-- Std: 0.0000
-- Min: 0.1669
-- Max: 0.1669
-- Runs: 1
+**BPC**  
+- 均值: 0.1669  
+- 标准差: 0.0000  
+- 最小值: 0.1669  
+- 最大值: 0.1669  
+- 运行次数: 1  
 
-**Behavior Coverage (PEC)**:
-- Mean: 0.7245
-- Std: 0.0000
-- Min: 0.7245
-- Max: 0.7245
-- Runs: 1
+**DBCC**  
+- 均值: 0.7245  
+- 标准差: 0.0000  
+- 最小值: 0.7245  
+- 最大值: 0.7245  
+- 运行次数: 1  
 
-**Trajectory Diversity (TCD)**:
-- Mean: 0.6682
-- Std: 0.0000
-- Min: 0.6682
-- Max: 0.6682
-- Runs: 1
+**DPD**  
+- 均值: 0.6682  
+- 标准差: 0.0000  
+- 最小值: 0.6682  
+- 最大值: 0.6682  
+- 运行次数: 1  
 
-**Behavior Matrix (BCM)**:
-- Mean: 0.2429
-- Std: 0.0000
-- Min: 0.2429
-- Max: 0.2429
-- Runs: 1
+**BCM**  
+- 均值: 0.2429  
+- 标准差: 0.0000  
+- 最小值: 0.2429  
+- 最大值: 0.2429  
+- 运行次数: 1  
 
-### Embedding-based
+### Embedding 相似度
 
-**Parameter Coverage (PC)**:
-- Mean: 0.0000
-- Std: 0.0000
-- Min: 0.0000
-- Max: 0.0000
-- Runs: 0
+**BPC**  
+- 均值: 0.0000  
+- 标准差: 0.0000  
+- 最小值: 0.0000  
+- 最大值: 0.0000  
+- 运行次数: 0  
 
-**Behavior Coverage (PEC)**:
-- Mean: 0.0000
-- Std: 0.0000
-- Min: 0.0000
-- Max: 0.0000
-- Runs: 0
+**DBCC**  
+- 均值: 0.0000  
+- 标准差: 0.0000  
+- 最小值: 0.0000  
+- 最大值: 0.0000  
+- 运行次数: 0  
 
-**Trajectory Diversity (TCD)**:
-- Mean: 0.0000
-- Std: 0.0000
-- Min: 0.0000
-- Max: 0.0000
-- Runs: 0
+**DPD**  
+- 均值: 0.0000  
+- 标准差: 0.0000  
+- 最小值: 0.0000  
+- 最大值: 0.0000  
+- 运行次数: 0  
 
-**Behavior Matrix (BCM)**:
-- Mean: 0.0000
-- Std: 0.0000
-- Min: 0.0000
-- Max: 0.0000
-- Runs: 0
+**BCM**  
+- 均值: 0.0000  
+- 标准差: 0.0000  
+- 最小值: 0.0000  
+- 最大值: 0.0000  
+- 运行次数: 0  
 
-### Feature-based
+### 特征距离
 
-**Parameter Coverage (PC)**:
-- Mean: 0.1249
-- Std: 0.0000
-- Min: 0.1249
-- Max: 0.1249
-- Runs: 1
+**BPC**  
+- 均值: 0.1249  
+- 标准差: 0.0000  
+- 最小值: 0.1249  
+- 最大值: 0.1249  
+- 运行次数: 1  
 
-**Behavior Coverage (PEC)**:
-- Mean: 0.6334
-- Std: 0.0000
-- Min: 0.6334
-- Max: 0.6334
-- Runs: 1
+**DBCC**  
+- 均值: 0.6334  
+- 标准差: 0.0000  
+- 最小值: 0.6334  
+- 最大值: 0.6334  
+- 运行次数: 1  
 
-**Trajectory Diversity (TCD)**:
-- Mean: 0.8552
-- Std: 0.0000
-- Min: 0.8552
-- Max: 0.8552
-- Runs: 1
+**DPD**  
+- 均值: 0.8552  
+- 标准差: 0.0000  
+- 最小值: 0.8552  
+- 最大值: 0.8552  
+- 运行次数: 1  
 
-**Behavior Matrix (BCM)**:
-- Mean: 0.1913
-- Std: 0.0000
-- Min: 0.1913
-- Max: 0.1913
-- Runs: 1
+**BCM**  
+- 均值: 0.1913  
+- 标准差: 0.0000  
+- 最小值: 0.1913  
+- 最大值: 0.1913  
+- 运行次数: 1  
 
-### Hybrid
+### 混合策略
 
-**Parameter Coverage (PC)**:
-- Mean: 0.1737
-- Std: 0.0000
-- Min: 0.1737
-- Max: 0.1737
-- Runs: 1
+**BPC**  
+- 均值: 0.1737  
+- 标准差: 0.0000  
+- 最小值: 0.1737  
+- 最大值: 0.1737  
+- 运行次数: 1  
 
-**Behavior Coverage (PEC)**:
-- Mean: 0.6327
-- Std: 0.0000
-- Min: 0.6327
-- Max: 0.6327
-- Runs: 1
+**DBCC**  
+- 均值: 0.6327  
+- 标准差: 0.0000  
+- 最小值: 0.6327  
+- 最大值: 0.6327  
+- 运行次数: 1  
 
-**Trajectory Diversity (TCD)**:
-- Mean: 0.6934
-- Std: 0.0000
-- Min: 0.6934
-- Max: 0.6934
-- Runs: 1
+**DPD**  
+- 均值: 0.6934  
+- 标准差: 0.0000  
+- 最小值: 0.6934  
+- 最大值: 0.6934  
+- 运行次数: 1  
 
-**Behavior Matrix (BCM)**:
-- Mean: 0.2243
-- Std: 0.0000
-- Min: 0.2243
-- Max: 0.2243
-- Runs: 1
+**BCM**  
+- 均值: 0.2243  
+- 标准差: 0.0000  
+- 最小值: 0.2243  
+- 最大值: 0.2243  
+- 运行次数: 1  
 

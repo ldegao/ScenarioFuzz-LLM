@@ -246,10 +246,10 @@ def main():
             print(f"\nMetrics Summary:")
             summary = analysis["metrics_summary"]
             print(f"  场景数: {summary.get('num_scenarios', 'N/A')}")
-            print(f"  PC: {summary.get('pc', 'N/A')}")
-            print(f"  PEC: {summary.get('pec', 'N/A')}")
-            print(f"  TCD: {summary.get('tcd', 'N/A')}")
-            print(f"  BCM: {summary.get('bcm', 'N/A')}")
+            print(f"  PCE (pc): {summary.get('pc', 'N/A')}")
+            print(f"  BCE (pec): {summary.get('pec', 'N/A')}")
+            print(f"  DPE (tcd): {summary.get('tcd', 'N/A')}")
+            print(f"  CCE (bcm): {summary.get('bcm', 'N/A')}")
         
         print(f"\n诊断:")
         for item in analysis["diagnosis"]:

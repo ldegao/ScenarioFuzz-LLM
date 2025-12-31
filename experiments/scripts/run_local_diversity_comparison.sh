@@ -1,6 +1,6 @@
 #!/bin/bash
 # Batch script for running Experiment 3: Local Diversity Comparison (GPT-guided vs Random mutations)
-# This script runs two experiments with the same seed set and compares their local diversity metrics (LMS/SED/OSCR)
+# This script runs two experiments with the same seed set and compares their local diversity metrics (LRD/SCD/TER; legacy keys lms/sed/oscr)
 
 set -u
 DB_PATH="./data/scenario_db.json"
@@ -25,6 +25,8 @@ TOWN=3
 TIMEOUT=60
 # Use a fixed seed to ensure both experiments use the same initial seed set
 DETERM_SEED=42.0
+# Default initial seed library (from historical run) to ensure identical seed set
+SEED_DIR="./experiments/runs/ScenarioFuzz-LLM/S4_disable_similarity_guided_2/queue"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -53,6 +55,10 @@ while [[ $# -gt 0 ]]; do
             DETERM_SEED="$2"
             shift 2
             ;;
+        --seed-dir)
+            SEED_DIR="$2"
+            shift 2
+            ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -63,12 +69,13 @@ while [[ $# -gt 0 ]]; do
             echo "  --town N                   CARLA town number (default: 3)"
             echo "  --timeout N                Scenario timeout in seconds (default: 60)"
             echo "  --determ-seed F            Fixed random seed for reproducibility (default: 42.0)"
+            echo "  --seed-dir PATH            Fixed initial seed library (default: $SEED_DIR)"
             echo "  --help                     Show this help message"
             echo ""
             echo "This script runs Experiment 3: Local Diversity Comparison"
             echo "  - Step 1: Run GPT-guided mutation experiment (ScenarioFuzz-LLM with default settings)"
             echo "  - Step 2: Run random mutation experiment (ScenarioFuzz-LLM with --disable-guided-mutation)"
-            echo "  - Step 3: Compare local diversity metrics (LMS/SED/OSCR) between the two experiments"
+            echo "  - Step 3: Compare local diversity metrics (LRD/SCD/TER; keys lms/sed/oscr) between the two experiments"
             echo ""
             echo "Both experiments use the same random seed (--determ-seed) to ensure they start with"
             echo "the same initial seed set, enabling fair comparison of local mutation behavior."
@@ -94,8 +101,9 @@ echo "  Target: $TARGET"
 echo "  Town: $TOWN"
 echo "  Timeout: $TIMEOUT seconds"
 echo "  Fixed random seed: $DETERM_SEED"
+echo "  Seed directory: $SEED_DIR"
 echo ""
-echo "This experiment compares local diversity metrics (LMS/SED/OSCR) between:"
+echo "This experiment compares local diversity metrics (LRD/SCD/TER; keys lms/sed/oscr) between:"
 echo "  1. GPT-guided mutations (ScenarioFuzz-LLM with default settings)"
 echo "  2. Random mutations (ScenarioFuzz-LLM with --disable-guided-mutation)"
 echo ""
@@ -105,6 +113,17 @@ read -p "Press Enter to start, or Ctrl+C to cancel..."
 
 # Create output directory
 mkdir -p "$OUTPUT_ROOT"
+
+# Validate seed directory
+if [ ! -d "$SEED_DIR" ]; then
+    echo "[ERROR] Seed directory not found: $SEED_DIR"
+    echo "        Please point --seed-dir to the initial seed library (e.g., historical run's queue)"
+    exit 1
+fi
+if ! find "$SEED_DIR" -maxdepth 1 -type f \( -name "*.json" -o -name "*.pkl" \) | head -n 1 >/dev/null 2>&1; then
+    echo "[WARNING] Seed directory is empty or has no json/pkl files: $SEED_DIR"
+    echo "          The run will start with an empty seed set."
+fi
 
 run_with_retry() {
     local desc="$1"; shift
@@ -144,7 +163,8 @@ run_with_retry "GPT-guided mutation experiment" \
         --target "$TARGET" \
         --town "$TOWN" \
         --timeout "$TIMEOUT" \
-        --determ-seed "$DETERM_SEED"
+        --determ-seed "$DETERM_SEED" \
+        $( [ -n "$SEED_DIR" ] && echo --seed-dir "$SEED_DIR" )
 
 # Find the GPT experiment directory (most recent ScenarioFuzz-LLM experiment)
 if [ -d "$OUTPUT_ROOT/ScenarioFuzz-LLM" ]; then
@@ -177,7 +197,8 @@ run_with_retry "Random mutation experiment" \
         --town "$TOWN" \
         --timeout "$TIMEOUT" \
         --determ-seed "$DETERM_SEED" \
-        --disable-guided-mutation
+        --disable-guided-mutation \
+        $( [ -n "$SEED_DIR" ] && echo --seed-dir "$SEED_DIR" )
 
 # Find the random experiment directory (most recent ScenarioFuzz-LLM experiment)
 if [ -d "$OUTPUT_ROOT/ScenarioFuzz-LLM" ]; then
@@ -227,8 +248,8 @@ echo "  Random mutation experiment: $RAND_EXP_DIR"
 echo "  Comparison results: $COMPARISON_OUTPUT"
 echo ""
 echo "The comparison JSON contains:"
-echo "  - gpt: LMS/SED/OSCR metrics for GPT-guided mutations"
-echo "  - random: LMS/SED/OSCR metrics for random mutations"
+echo "  - gpt: LRD/SCD/TER metrics for GPT-guided mutations (stored as lms/sed/oscr)"
+echo "  - random: LRD/SCD/TER metrics for random mutations (stored as lms/sed/oscr)"
 echo "  - delta_lms/sed/oscr: Differences between the two methods"
 echo ""
 echo "To view the results:"

@@ -4,6 +4,7 @@ Improved RAG engine with hybrid retrieval (vector + BM25) and reranking
 """
 
 from typing import List, Dict, Any, Optional
+import time
 import json
 import os
 from .scenario_encoder import ScenarioEncoder
@@ -26,7 +27,8 @@ class EnhancedRAGEngine:
                  use_hybrid_search: bool = True,
                  hybrid_alpha: float = 0.7,
                  use_reranking: bool = True,
-                 reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+                 reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                 similarity_threshold: Optional[float] = None):
         """
         Initialize the enhanced RAG engine
         
@@ -39,8 +41,10 @@ class EnhancedRAGEngine:
             hybrid_alpha: Weight for vector retrieval in hybrid search (0-1)
             use_reranking: Whether to use reranking after retrieval
             reranker_model: Cross-encoder model name for reranking
+            similarity_threshold: Optional distance/score threshold to filter neighbors
         """
         self.top_k = top_k
+        self.similarity_threshold = similarity_threshold
         self.use_hybrid_search = use_hybrid_search
         self.use_reranking = use_reranking
         
@@ -114,6 +118,57 @@ class EnhancedRAGEngine:
         print(f"[EnhancedRAGEngine] Initialized with {self.knowledge_base.size()} scenarios")
         print(f"[EnhancedRAGEngine] Hybrid search: {self.use_hybrid_search}, Reranking: {self.use_reranking}")
     
+    def _filter_by_threshold(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Optionally filter retrieval results by a distance/score threshold (τ gate).
+        """
+        if self.similarity_threshold is None:
+            return results
+        filtered = []
+        for r in results:
+            if 'distance' in r and r['distance'] <= self.similarity_threshold:
+                filtered.append(r)
+        return filtered
+
+    def aggregate_neighbor_analysis(self, neighbors: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Placeholder aggregation with priority awareness; extend with risk/diversity metrics.
+        """
+        if not neighbors:
+            return {}
+        summary = {
+            "neighbor_count": len(neighbors),
+            "top_priority": max((n.get("metadata", {}).get("priority", "low") for n in neighbors), default="low"),
+        }
+        return summary
+
+    def update_access_stats(self, neighbors: List[Dict[str, Any]]):
+        """Update access counters in the knowledge base for retrieved neighbors."""
+        indices = [n.get("index", -1) for n in neighbors if "index" in n]
+        self.knowledge_base.update_access_stats(indices)
+
+    def insert_memory(self, vec: Any, snapshot: Any, analysis: Any, priority: str = "low", rebuild_index: bool = False):
+        """
+        Insert a new memory with priority metadata and optionally rebuild the index/BM25 model.
+        """
+        scenario = {
+            "description": str(snapshot),
+            "analysis": analysis,
+            "priority": priority,
+            "access_count": 0,
+            "last_access_ts": time.time(),
+        }
+        self.knowledge_base.add_scenario(scenario)
+
+        if rebuild_index:
+            scenario_descriptions = self.knowledge_base.get_scenario_descriptions()
+            vectors = self.encoder.encode_batch(scenario_descriptions)
+            scenarios = self.knowledge_base.get_all_scenarios()
+            self.vector_store.build_index(vectors, scenario_descriptions, scenarios)
+
+            if self.use_hybrid_search and self.hybrid_retriever:
+                self.hybrid_retriever.fit_bm25(scenario_descriptions)
+
     def retrieve_relevant_scenarios(self, 
                                     seed_scenario: str, 
                                     k: Optional[int] = None,
@@ -158,8 +213,9 @@ class EnhancedRAGEngine:
             reranked = self.reranker.rerank_results(seed_scenario, results, top_k=k)
             results = reranked
         
-        # Limit to top-k
+        # Limit to top-k and apply optional threshold
         results = results[:k]
+        results = self._filter_by_threshold(results)
         
         if return_metadata:
             return results

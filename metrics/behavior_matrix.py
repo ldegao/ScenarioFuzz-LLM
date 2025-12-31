@@ -1,14 +1,12 @@
 """
-Behavior Semantic Matrix Coverage (BCM) Metric
-Evaluates coverage of behavior combinations using a behavior-scenario matrix
+Combination Coverage Entropy (CCE)
+Evaluates coverage of behavior combinations using Hartley entropy over the
+behavior-scenario matrix:
 
-All thresholds are based on industry standards and regulations:
-- UNECE R152: Emergency braking thresholds
-- EuroNCAP: AEB and car-following thresholds
-- ISO 22179, ISO 3888-1/2: Acceleration and lane change thresholds
-- ISO 34502: Cut-in behavior definition
-- Chinese Traffic Law: Speeding thresholds
-- FHWA: Aggressive driving definitions
+    CCE = log(T_obs) / log(T_max)
+
+where T_obs is the number of unique behavior combinations observed across
+scenarios and T_max is the total possible combinations (2^|B|).
 """
 
 import numpy as np
@@ -21,11 +19,9 @@ from states import ScenarioState
 from metrics.behavior_parameters import BehaviorParameterExtractor
 
 
-class BehaviorMatrix:
+class CombinationCoverageEntropy:
     """
-    Calculates behavior semantic matrix coverage
-    BCM measures coverage of behavior combinations
-    
+    Calculates Hartley-entropy-based behavior combination coverage.
     All thresholds are based on industry standards and regulations.
     """
     
@@ -254,18 +250,11 @@ class BehaviorMatrix:
         total_possible = 2 ** len(self.behavior_labels)
         covered_count = len(unique_combinations)
         
-        # Use logarithmic normalization to handle large combination space
-        # This avoids numerical precision issues when coverage is very small
-        # (e.g., 100/4096 ≈ 0.0244 becomes more meaningful after log normalization)
-        # Formula: coverage = log(1 + covered) / log(1 + total_possible)
-        # Benefits:
-        # - When covered = 0: coverage = 0
-        # - When covered = total: coverage ≈ 1 (asymptotically)
-        # - Better numerical stability and discrimination
-        if total_possible > 0 and covered_count > 0:
-            coverage_ratio = np.log1p(covered_count) / np.log1p(total_possible)
-        else:
+        if total_possible <= 1 or covered_count == 0:
             coverage_ratio = 0.0
+        else:
+            coverage_ratio = np.log(covered_count) / np.log(total_possible)
+            coverage_ratio = float(np.clip(coverage_ratio, 0.0, 1.0))
         
         # Behavior diversity: average number of behaviors per scenario
         behavior_counts = [len(behaviors) for behaviors in self.scenario_behaviors]
@@ -277,7 +266,7 @@ class BehaviorMatrix:
         return {
             'unique_combinations': len(unique_combinations),
             'total_possible': total_possible,
-            'coverage_ratio': float(coverage_ratio),  # Logarithmically normalized (primary metric)
+            'coverage_ratio': float(coverage_ratio),  # Hartley entropy normalized (primary metric)
             'linear_coverage': float(linear_coverage),  # Linear ratio (for reference/debugging)
             'behavior_diversity': float(behavior_diversity),
             'matrix': matrix.tolist()  # Include matrix for visualization
@@ -292,3 +281,6 @@ class BehaviorMatrix:
         self.behavior_matrix = None
         self.scenario_behaviors.clear()
 
+
+# New name (preferred) and backward compatibility alias
+BehaviorMatrix = CombinationCoverageEntropy

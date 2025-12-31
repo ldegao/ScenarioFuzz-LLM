@@ -285,7 +285,7 @@ def run_test(sim_port, target, density, town, duration, max_failures=3, out_dir=
 
     # Configure this run as a non-GPT baseline with metrics enabled:
     # - Disable GPT-based evaluation/logging
-    # - Ensure multi-dimensional metrics (PC/PEC/TCD/BCM) are computed
+    # - Ensure multi-dimensional metrics (BPC/DBCC/DPD/BCM) are computed
     default_args["disable_gpt"] = True
     default_args["enable_rag_metrics"] = True
 

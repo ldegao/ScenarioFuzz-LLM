@@ -80,6 +80,7 @@ def run_experiment(args: argparse.Namespace) -> None:
             "disable_similarity": args.disable_similarity,
             "disable_guided_mutation": args.disable_guided_mutation,
             "determ_seed": args.determ_seed,
+            "seed_dir": args.seed_dir,
             "debug": args.debug,
         },
     )
@@ -103,6 +104,7 @@ def run_experiment(args: argparse.Namespace) -> None:
         disable_similarity=bool(merged.get("disable_similarity", False)),
         disable_guided_mutation=bool(merged.get("disable_guided_mutation", False)),
         determ_seed=merged.get("determ_seed"),
+        seed_dir=merged.get("seed_dir"),
         debug=bool(merged.get("debug", False)),
     )
 
@@ -216,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--disable-similarity", action="store_true", help="禁用相似度模块（相似度记0，跳过 GPT/embedding/feature 计算）")
     run_p.add_argument("--disable-guided-mutation", action="store_true", help="禁用指导变异（不调用 GPT answer3，使用纯随机变异参数）")
     run_p.add_argument("--determ-seed", type=float, help="固定随机种子（用于可复现性，实验3需要相同种子）")
+    run_p.add_argument("--seed-dir", type=str, help="指定初始种子库目录（默认 ./data/seed，可指向历史实验的 queue 作为起始种子）")
     run_p.add_argument("--output-root", type=str, default=str(DEFAULT_RUN_ROOT), help="输出根目录（默认 experiments/runs）")
     run_p.add_argument("--debug", action="store_true")
     run_p.set_defaults(func=run_experiment)

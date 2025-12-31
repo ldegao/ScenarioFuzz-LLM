@@ -1,12 +1,11 @@
 """
-Driving Pattern Diversity (DPD) Metric
-Evaluates trajectory pattern diversity using Fréchet distance and adaptive clustering
+Driving Pattern Entropy (DPE)
+Evaluates trajectory pattern diversity using Fréchet/DTW-style distances
+and adaptive clustering, with normalized Shannon entropy:
 
-Replaces the original TCD metric which used subjective DTW clustering.
-DPD uses Fréchet distance (more sensitive to physical trajectories) and
-DBSCAN adaptive clustering (eliminates subjective cluster count).
+    DPE = H1(clusters) / log(K)
 
-Source: Fréchet distance is widely used in autonomous driving trajectory analysis
+where K is the number of discovered trajectory clusters.
 """
 
 import numpy as np
@@ -22,10 +21,10 @@ from states import ScenarioState
 from metrics.behavior_parameters import BehaviorParameterExtractor
 
 
-class DrivingPatternDiversity:
+class DrivingPatternEntropy:
     """
-    Calculates driving pattern diversity using Fréchet distance and adaptive clustering
-    DPD measures the diversity of trajectory patterns through entropy of distance distribution
+    Calculates driving pattern diversity using Fréchet distance and adaptive clustering.
+    Returns normalized Shannon entropy over cluster assignments (DPE).
     """
     
     # Frame rate for time-based calculations
@@ -232,8 +231,9 @@ class DrivingPatternDiversity:
         # Calculate probabilities
         probabilities = counts / len(clusters)
         
-        # Calculate entropy
-        entropy = -np.sum(probabilities * np.log(probabilities + 1e-10))
+        # Calculate Shannon entropy, ignoring zero-probability entries
+        non_zero = probabilities > 0
+        entropy = -np.sum(probabilities[non_zero] * np.log(probabilities[non_zero]))
         
         return float(entropy)
     
@@ -266,30 +266,19 @@ class DrivingPatternDiversity:
         # Calculate entropy
         entropy = self.calculate_entropy(labels)
         
-        # Calculate diversity score (normalized entropy)
-        # Use more stable normalization to handle cases with few clusters
+        # Calculate diversity score (normalized Shannon entropy)
         unique_clusters = len(set(labels))
         n_scenarios = len(labels)
         
         if unique_clusters <= 1 or n_scenarios <= 1:
             diversity_score = 0.0
         else:
-            # Maximum entropy occurs when clusters are uniformly distributed
-            # H_max = log(k) where k is the number of clusters
             max_entropy = np.log(unique_clusters)
-            
-            # Normalize entropy to [0, 1]
-            # Add small epsilon to avoid division by zero and improve numerical stability
-            # This handles cases where max_entropy is very small (e.g., log(2) ≈ 0.693)
-            diversity_score = entropy / (max_entropy + 1e-10)
-            
-            # Clamp to [0, 1] to handle any numerical errors
-            # Note: entropy can theoretically exceed max_entropy due to numerical precision,
-            # but in practice it should be bounded
-            diversity_score = np.clip(diversity_score, 0.0, 1.0)
+            diversity_score = entropy / max_entropy if max_entropy > 0 else 0.0
+            diversity_score = float(np.clip(diversity_score, 0.0, 1.0))
         
         return {
-            'entropy': entropy,
+            'entropy': float(entropy),
             'num_clusters': unique_clusters,
             'diversity_score': float(diversity_score)
         }
@@ -300,5 +289,6 @@ class DrivingPatternDiversity:
         self.cluster_labels.clear()
 
 
-# Backward compatibility alias
-TrajectoryDiversity = DrivingPatternDiversity
+# New name (preferred) and backward compatibility aliases
+TrajectoryDiversity = DrivingPatternEntropy
+DrivingPatternDiversity = DrivingPatternEntropy

@@ -1,6 +1,6 @@
 """
 Plot Metrics Module
-Generates visualization charts for various evaluation metrics
+Generates visualization charts for PCE/BCE/DPE/CCE (legacy keys pc/pec/tcd/bcm).
 """
 
 import numpy as np
@@ -12,10 +12,10 @@ import os
 
 def plot_parameter_coverage(pc_scores: Dict[str, float], output_path: Optional[str] = None):
     """
-    Plot parameter coverage as radar chart
+    Plot parameter configuration entropy (PCE) as bar chart.
     
     Args:
-        pc_scores: Dictionary mapping method names to PC scores
+        pc_scores: Dictionary mapping method names to PCE scores (key `pc`)
         output_path: Optional path to save the figure
     """
     methods = list(pc_scores.keys())
@@ -23,9 +23,9 @@ def plot_parameter_coverage(pc_scores: Dict[str, float], output_path: Optional[s
     
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.bar(methods, scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'])
-    ax.set_ylabel('Parameter Coverage (PC)', fontsize=12)
+    ax.set_ylabel('Parameter Configuration Entropy (PCE)', fontsize=12)
     ax.set_xlabel('Method', fontsize=12)
-    ax.set_title('Parameter Space Coverage Comparison', fontsize=14, fontweight='bold')
+    ax.set_title('Parameter Configuration Entropy Comparison', fontsize=14, fontweight='bold')
     ax.set_ylim([0, 1])
     ax.grid(axis='y', alpha=0.3)
     
@@ -165,7 +165,7 @@ def plot_comparison_radar(all_metrics: Dict[str, Dict[str, float]],
         output_path: Optional path to save the figure
     """
     # Extract metric names
-    metric_names = ['PC', 'PEC', 'TCD', 'BCM']
+    metric_names = ['PCE', 'BCE', 'DPE', 'CCE']
     
     # Prepare data
     methods = list(all_metrics.keys())
@@ -179,13 +179,13 @@ def plot_comparison_radar(all_metrics: Dict[str, Dict[str, float]],
     for i, method in enumerate(methods):
         values = []
         for metric in metric_names:
-            if metric == 'PC':
+            if metric == 'PCE':
                 values.append(all_metrics[method].get('pc', 0.0))
-            elif metric == 'PEC':
+            elif metric == 'BCE':
                 values.append(all_metrics[method].get('pec', 0.0))
-            elif metric == 'TCD':
+            elif metric == 'DPE':
                 values.append(all_metrics[method].get('tcd', 0.0))
-            elif metric == 'BCM':
+            elif metric == 'CCE':
                 values.append(all_metrics[method].get('bcm', 0.0))
         values += values[:1]  # Complete the circle
         

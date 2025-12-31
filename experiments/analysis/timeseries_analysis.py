@@ -2,7 +2,7 @@
 """
 Time series analysis of diversity metrics.
 
-This script analyzes how metrics (PC, PEC, TCD, BCM) change over time
+This script analyzes how metrics (PCE, BCE, DPE, CCE) change over time
 as scenarios are generated, identifying convergence and stability patterns.
 """
 

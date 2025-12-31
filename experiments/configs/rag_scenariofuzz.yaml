@@ -1,0 +1,9 @@
+method: rag-scenariofuzz
+num_scenarios: 100
+target: behavior
+town: 3
+timeout: 60
+density: 0.4
+rag_k: 5
+debug: false
+

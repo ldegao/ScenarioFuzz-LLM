@@ -1,33 +1,50 @@
 """
 Metrics Module for ScenarioFuzz-LLM
-Provides multi-dimensional coverage evaluation metrics
-
-All metrics are now based on industry standards and regulations:
-- BPC (Behavior Parameter Coverage): Vehicle behavior parameters (ISO, UNECE, EuroNCAP)
-- DBCC (Driving Behavior Class Coverage): ISO 34502 behavior taxonomy
-- DPD (Driving Pattern Diversity): Fréchet distance with adaptive clustering
-- BCM (Behavior Matrix Coverage): Standard thresholds from regulations
+Provides multi-dimensional coverage evaluation metrics (entropy-based):
+- PCE (Parameter Configuration Entropy): Hartley entropy over parameter grid
+- BCE (Behavior Category Entropy): Shannon entropy over ISO 34502 classes
+- DPE (Driving Pattern Entropy): Normalized Shannon entropy over trajectory clusters
+- CCE (Combination Coverage Entropy): Hartley entropy over behavior combinations
 """
 
-# Import new standardized metrics
-from .parameter_coverage import BehaviorParameterCoverage, ParameterCoverage
-from .driving_behavior_class_coverage import DrivingBehaviorClassCoverage, BehaviorCoverage
-from .trajectory_diversity import DrivingPatternDiversity, TrajectoryDiversity
-from .behavior_matrix import BehaviorMatrix
+# Import standardized metrics (preferred names) and backward-compatible aliases
+from .parameter_coverage import (
+    ParameterConfigurationEntropy,
+    ParameterCoverage,
+    BehaviorParameterCoverage,
+)
+from .driving_behavior_class_coverage import (
+    BehaviorCategoryEntropy,
+    BehaviorCoverage,
+    DrivingBehaviorClassCoverage,
+)
+from .trajectory_diversity import (
+    DrivingPatternEntropy,
+    DrivingPatternDiversity,
+    TrajectoryDiversity,
+)
+from .behavior_matrix import (
+    CombinationCoverageEntropy,
+    BehaviorMatrix,
+)
 from .behavior_parameters import BehaviorParameterExtractor
 
 # Export both new names and backward-compatible aliases
 __all__ = [
-    # New standardized names
-    'BehaviorParameterCoverage',
-    'DrivingBehaviorClassCoverage',
-    'DrivingPatternDiversity',
+    # Preferred entropy-based names
+    'ParameterConfigurationEntropy',
+    'BehaviorCategoryEntropy',
+    'DrivingPatternEntropy',
+    'CombinationCoverageEntropy',
     # Backward-compatible aliases
     'ParameterCoverage',
+    'BehaviorParameterCoverage',
     'BehaviorCoverage',
+    'DrivingBehaviorClassCoverage',
+    'DrivingPatternDiversity',
     'TrajectoryDiversity',
-    # Existing
     'BehaviorMatrix',
+    # Utilities
     'BehaviorParameterExtractor'
 ]
 

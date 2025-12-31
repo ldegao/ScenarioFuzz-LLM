@@ -78,7 +78,7 @@ python -m experiments.cli run \
 
 ### 4. RAG-ScenarioFuzz（Behavior + RAG + 多维指标）
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 
 # 短流程：1 个场景，用于验证 RAG 与 GPT 日志、场景库持久化
 python -m experiments.cli run \
@@ -112,7 +112,7 @@ python -m experiments.cli run --method rag-scenariofuzz --num-scenarios 1 --targ
 
 ### 6. 实验 3：局部变异多样性对比（GPT 指导 vs 随机）
 
-该实验在固定 seed 条件下专门分析局部变异行为，比较 GPT 指导变异与随机变异的局部多样性指标（LMS/SED/OSCR）。
+该实验在固定 seed 条件下专门分析局部变异行为，比较 GPT 指导变异与随机变异的局部多样性指标（LRD/SCD/TER，字段名兼容 lms/sed/oscr）。
 
 **一键运行脚本（推荐）**：
 ```bash
@@ -161,15 +161,15 @@ python -m experiments.runners.run_local_diversity_comparison \
 
 **输出说明**：
 - 对比结果保存在 `./experiment_results/local_diversity_comparison.json`
-- 包含 GPT 和随机变异的 LMS/SED/OSCR 指标及差值
+- 包含 GPT 和随机变异的 LRD/SCD/TER 指标及差值（键名 lms/sed/oscr）
 - 前两组实验关注全局分布，实验3专门分析局部变异行为
 
-### 7. 指标聚合与可视化（BPC / DBCC / DPD / BCM）
+### 7. 指标聚合与可视化（PCE / BCE / DPE / CCE）
 
 运行完各方法的实验后，可以按如下步骤做统一聚合与绘图：
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 source venv/bin/activate
 
 # 1) 收集所有实验的 metrics_summary.json，生成 all_methods_results.json
@@ -177,7 +177,7 @@ python -m experiments.aggregation.main \
   --root experiments/runs \
   --output experiments/runs/all_methods_results.json
 
-# 2) 生成 BPC/DBCC/DPD/BCM 图像和综合雷达图
+# 2) 生成 PCE/BCE/DPE/CCE 图像和综合雷达图
 python -m experiments.analysis.generate_figures \
   --results-file experiments/runs/all_methods_results.json \
   --output-dir reports/figs

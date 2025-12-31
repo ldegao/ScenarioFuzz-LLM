@@ -1,0 +1,8 @@
+method: tmfuzzer
+num_scenarios: 100
+target: autoware
+town: 3
+timeout: 300
+density: 0.4
+debug: false
+

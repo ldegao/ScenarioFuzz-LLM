@@ -4,6 +4,7 @@ Main RAG engine that integrates encoding, retrieval, and generation
 """
 
 from typing import List, Dict, Any, Optional
+import time
 import json
 import os
 from .scenario_encoder import ScenarioEncoder
@@ -20,7 +21,8 @@ class RAGEngine:
                  model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
                  knowledge_base_path: str = "./data/knowledge_base/",
                  index_type: str = "IndexFlatL2",
-                 top_k: int = 5):
+                 top_k: int = 5,
+                 similarity_threshold: Optional[float] = None):
         """
         Initialize the RAG engine
         
@@ -29,8 +31,10 @@ class RAGEngine:
             knowledge_base_path: Path to knowledge base directory
             index_type: Type of Faiss index
             top_k: Number of top scenarios to retrieve
+            similarity_threshold: Optional distance/score threshold to filter neighbors
         """
         self.top_k = top_k
+        self.similarity_threshold = similarity_threshold
         self.encoder = ScenarioEncoder(model_name=model_name)
         self.knowledge_base = KnowledgeBase(knowledge_base_path=knowledge_base_path)
         self.vector_store = VectorStore(
@@ -75,6 +79,59 @@ class RAGEngine:
         self.initialized = True
         print(f"[RAGEngine] Initialized with {self.knowledge_base.size()} scenarios")
     
+    def _filter_by_threshold(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Optionally filter retrieval results by a distance/score threshold.
+        This is a lightweight placeholder to align with the pseudocode τ gate.
+        """
+        if self.similarity_threshold is None:
+            return results
+        filtered = []
+        for r in results:
+            # Lower distance is better for L2/IP indexes; keep those within τ.
+            if 'distance' in r and r['distance'] <= self.similarity_threshold:
+                filtered.append(r)
+        return filtered
+
+    def aggregate_neighbor_analysis(self, neighbors: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Placeholder for aggregating neighbor analyses with optional priority weighting.
+        Currently returns a simple summary; extend with risk/diversity metrics as needed.
+        """
+        if not neighbors:
+            return {}
+        summary = {
+            "neighbor_count": len(neighbors),
+            "top_priority": max((n.get("metadata", {}).get("priority", "low") for n in neighbors), default="low"),
+        }
+        return summary
+
+    def update_access_stats(self, neighbors: List[Dict[str, Any]]):
+        """
+        Update access statistics in the knowledge base for retrieved neighbors.
+        """
+        indices = [n.get("index", -1) for n in neighbors if "index" in n]
+        self.knowledge_base.update_access_stats(indices)
+
+    def insert_memory(self, vec: Any, snapshot: Any, analysis: Any, priority: str = "low", rebuild_index: bool = False):
+        """
+        Insert a new memory (snapshot + analysis) into the knowledge base and optionally rebuild the index.
+        """
+        scenario = {
+            "description": str(snapshot),
+            "analysis": analysis,
+            "priority": priority,
+            "access_count": 0,
+            "last_access_ts": time.time(),
+        }
+        self.knowledge_base.add_scenario(scenario)
+
+        if rebuild_index:
+            scenario_descriptions = self.knowledge_base.get_scenario_descriptions()
+            vectors = self.encoder.encode_batch(scenario_descriptions)
+            scenarios = self.knowledge_base.get_all_scenarios()
+            self.vector_store.build_index(vectors, scenario_descriptions, scenarios)
+
     def retrieve_relevant_scenarios(self, seed_scenario: str, k: Optional[int] = None) -> List[str]:
         """
         Retrieve k most relevant scenarios for a seed scenario
@@ -98,6 +155,7 @@ class RAGEngine:
         
         # Search for similar scenarios
         results = self.vector_store.search(query_vector, k=k)
+        results = self._filter_by_threshold(results)
         
         # Extract text descriptions
         retrieved_texts = [result['text'] for result in results]

@@ -16,11 +16,11 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 
 ## Post-Paper Updates
 
-- **Offline metric computation**: Metrics are now computed offline. Use `python -m experiments.analysis.calculate_metrics` on `queue/` scenarios to regenerate BPC/DBCC/DPD/BCM; supports incremental or full recomputation.
+- **Offline metric computation**: Metrics are now computed offline. Use `python -m experiments.analysis.calculate_metrics` on `queue/` scenarios to regenerate PCE/BCE/DPE/CCE; supports incremental or full recomputation.
 - **GPT API compatibility**: Supports OpenAI Responses API and GPT-5 with richer error diagnostics; video/image persistence is disabled by default to save disk space.
 - **Experiment management & token tracking**: TokenTracker aggregates per-model token usage into `token_usage.json`; experiment/archive directories are deduplicated, and a cleanup script handles failed experiment folders (`experiments/analysis/delete_failed_experiments.sh`).
 - **Analysis & reporting toolchain**: `experiments/aggregation` and `experiments/analysis` provide metric aggregation, comparisons/correlation/efficiency analysis, and similarity-comparison batch scripts.
-- **Metric naming alignment**: Metrics are standardized to BPC/DBCC/DPD/BCM (aligned with ISO 34502, UNECE, EuroNCAP). Outputs remain in the legacy keys `pc/pec/tcd/bcm` for backward compatibility—these map to BPC/DBCC/DPD/BCM.
+- **Metric naming alignment**: Metrics are standardized to PCE/BCE/DPE/CCE (entropy-based; aligned with ISO 34502, UNECE, EuroNCAP). Outputs remain in the legacy keys `pc/pec/tcd/bcm` for backward compatibility—these map to PCE/BCE/DPE/CCE.
 - **Unified CLI interface**: New unified CLI (`experiments/cli.py`) provides a single entry point for all experiments with `run`, `metrics`, `aggregate`, and `report` subcommands, simplifying experiment execution workflow.
 - **Ablation study support**: Added `--disable-similarity` and `--disable-guided-mutation` flags for ablation experiments to isolate the impact of similarity scoring and GPT-guided mutation components.
 - **Core improvements**: Fixed Scenario fitness serialization issues ensuring instance independence; optimized NPC generation with `spawn_skip_budget` mechanism to handle consecutive spawn failures; added ego vehicle kinematics recording (yaw, yaw_rate, lateral/longitudinal speeds) for more accurate metric computation.
@@ -32,11 +32,11 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 - **RAG-Enhanced Generation**: New RAG (Retrieval-Augmented Generation) module provides semantic search and context-aware scenario generation for improved diversity.
 - **GPT API compatibility & debugging**: Supports OpenAI Responses API / GPT-5 with improved error handling and logging; video/image saving is disabled by default to reduce resource usage.
 - **Token usage tracking & archive hygiene**: TokenTracker aggregates per-model token usage (`token_usage.json` output); experiment directories are uniquified and include a cleanup script for failed runs.
-- **Multi-Dimensional Evaluation**: Four evaluation metrics (BPC, DBCC, DPD, BCM) provide comprehensive coverage assessment based on industry standards:
-  - **BPC (Behavior Parameter Coverage)**: Behavior parameter space combination coverage with logarithmic normalization
-  - **DBCC (Driving Behavior Category Coverage)**: ISO 34502 behavior taxonomy coverage
-  - **DPD (Driving Pattern Diversity)**: Trajectory pattern diversity using Fréchet distance and stabilized entropy normalization
-  - **BCM (Behavior Matrix Coverage)**: Behavior combination coverage with logarithmic normalization
+- **Multi-Dimensional Evaluation**: Four evaluation metrics (PCE, BCE, DPE, CCE) provide comprehensive coverage assessment based on industry standards:
+  - **BCE (Behavior Category Entropy)**: ISO 34502 behavior taxonomy diversity (normalized Shannon entropy)
+  - **DPE (Driving Pattern Entropy)**: Trajectory pattern diversity using Fréchet distance and normalized Shannon entropy
+  - **PCE (Parameter Configuration Entropy)**: Hartley entropy over discretized behavior parameter configurations
+  - **CCE (Combination Coverage Entropy)**: Hartley entropy over behavior combinations
 - **Offline Metrics Calculation**: Offline calculation pipeline decouples metric computation from fuzzing runs via `experiments/analysis/calculate_metrics.py` (incremental/full recompute supported).
 - **Multi-Objective Optimization**: Evaluates scenarios based on minimum vehicle distance, NOVA (speed variation), and dissimilarity (1 - similarity). GA objectives are normalized/clipped for scale balance: min distance clipped to 50m, NOVA to 20 m/s delta, similarity in [0,100] mapped to [0,1].
 - **Broad Edge Case Coverage**: Allows the testing framework to explore a wide array of potential ADS failures by continuously adapting and evolving test scenarios.
@@ -50,7 +50,7 @@ Our experiments demonstrate a 35.62% improvement in scenario diversity using Sce
 This repository includes the following components:
 - **Core Fuzzing Engine**: The core GA-based scenario fuzzer and its CARLA integration (`fuzzer.py`, `scenario.py`, `states.py`, `config/`, `script/`).
 - **RAG Module**: Retrieval-augmented generation for semantic-enhanced scenario generation (`rag_module/`).
-- **Metrics Module**: Multi-dimensional evaluation metrics (BPC, DBCC, DPD, BCM) based on industry standards (`metrics/`).
+- **Metrics Module**: Multi-dimensional evaluation metrics (PCE, BCE, DPE, CCE) based on industry standards (`metrics/`).
 - **Visualization Module**: Tools for generating charts and reports (`visualization/`).
 - **Analysis & Reporting**: Offline metric calculation, aggregation, and analysis/report generation (`experiments/analysis/`, `experiments/aggregation/`).
 - **Experiments Package**: Reproducible paper experiments (ScenarioFuzz-LLM, RAG-ScenarioFuzz, TM-Fuzzer), with runners, progress tracking, aggregation and analysis (`experiments/`; see `experiments/docs/PAPER_EXPERIMENTS.md` and `experiments/docs/QUICK_START.md`).
@@ -69,29 +69,29 @@ For end-to-end experimental usage of RAG-ScenarioFuzz, see `experiments/docs/PAP
 
 ### Multi-Dimensional Evaluation Metrics
 
-Four evaluation metrics provide comprehensive coverage assessment based on industry standards and regulations:
+Four entropy-based evaluation metrics provide comprehensive coverage assessment based on industry standards and regulations:
 
-- **BPC (Behavior Parameter Coverage)**: Measures behavior parameter space combination coverage using logarithmic normalization. Based on ISO 15622, UNECE Reg.79, ISO 3888-1/2, ISO 7401, and EuroNCAP standards.
+- **PCE (Parameter Configuration Entropy)**: Hartley entropy over discretized behavior parameter configurations. Based on ISO 15622, UNECE Reg.79, ISO 3888-1/2, ISO 7401, and EuroNCAP standards.
 
-- **DBCC (Driving Behavior Category Coverage)**: Evaluates coverage of ISO 34502 behavior taxonomy classes (11 standard behavior categories including car-following, lane changing, emergency braking, etc.).
+- **BCE (Behavior Category Entropy)**: Normalized Shannon entropy over ISO 34502 behavior taxonomy classes (11 standard behavior categories including car-following, lane changing, emergency braking, etc.).
 
-- **DPD (Driving Pattern Diversity)**: Measures trajectory pattern diversity using Fréchet distance with adaptive clustering and stabilized entropy normalization.
+- **DPE (Driving Pattern Entropy)**: Normalized Shannon entropy of trajectory clusters using Fréchet distance with adaptive clustering.
 
-- **BCM (Behavior Matrix Coverage)**: Evaluates behavior combination coverage using logarithmic normalization. Based on standard thresholds from UNECE R152, EuroNCAP, ISO 34502, and other regulations.
+- **CCE (Combination Coverage Entropy)**: Hartley entropy over behavior combinations. Based on standard thresholds from UNECE R152, EuroNCAP, ISO 34502, and other regulations.
 
 These metrics are automatically collected and aggregated in the new experiment pipeline (see `experiments/PAPER_EXPERIMENTS.md` for details).
 
 ### Offline Metrics Calculation (new)
 
-- Metrics are now computed offline. After running experiments, generate BPC/DBCC/DPD/BCM from `queue/` scenarios:
+- Metrics are now computed offline. After running experiments, generate PCE/BCE/DPE/CCE from `queue/` scenarios:
 ```bash
 python -m experiments.analysis.calculate_metrics \
   --experiment-dir ./experiments/runs/ScenarioFuzz-LLM/ScenarioFuzz-LLM_20251203_210023 \
   --incremental    # optional: only for new scenarios
 # add --recalculate to recompute everything
 ```
-- Results are stored in `metrics/metrics_records.jsonl` and `metrics/metrics_summary.json` for downstream aggregation/reporting. Field names stay as `pc/pec/tcd/bcm` (legacy keys) and correspond to BPC/DBCC/DPD/BCM.
-- Legacy names (PC/PEC/TCD/BCM) remain supported for compatibility; use BPC/DBCC/DPD/BCM in documentation and analysis.
+- Results are stored in `metrics/metrics_records.jsonl` and `metrics/metrics_summary.json` for downstream aggregation/reporting. Field names stay as `pc/pec/tcd/bcm` (legacy keys) and correspond to PCE/BCE/DPE/CCE.
+- Legacy keys (`pc/pec/tcd/bcm`) remain supported for compatibility; use PCE/BCE/DPE/CCE in documentation and analysis.
 
 ### Experiment Continuation and Reproducibility
 
@@ -336,7 +336,7 @@ Note: summaries aggregated under `"Unknown"` indicate the source `metrics_summar
 
 ### 4. Run Experiment 3: Local Diversity Comparison (GPT-guided vs Random mutations)
 
-This experiment compares local diversity metrics (LMS/SED/OSCR) between GPT-guided and random mutations using the same seed set. **Note**: While Experiments 1-2 focus on global distribution metrics (BPC/DBCC/DPD/BCM), Experiment 3 specifically analyzes local mutation behavior under fixed seed conditions to isolate the impact of GPT-guided mutation.
+This experiment compares local diversity metrics (LRD/SCD/TER; legacy keys LMS/SED/OSCR) between GPT-guided and random mutations using the same seed set. **Note**: While Experiments 1-2 focus on global distribution metrics (PCE/BCE/DPE/CCE), Experiment 3 specifically analyzes local mutation behavior under fixed seed conditions to isolate the impact of GPT-guided mutation.
 
 **Key Features**:
 - Uses the same random seed (`--determ-seed`) to ensure both experiments start with identical initial seed sets
@@ -367,11 +367,11 @@ experiments/runs/
     <random_experiment_id>/       # Random mutation experiment
       metrics_summary.json
       ...
-  local_diversity_comparison.json # Comparison results with LMS/SED/OSCR metrics
+  local_diversity_comparison.json # Comparison results with LRD/SCD/TER (keys lms/sed/oscr)
 ```
 
 The comparison JSON contains:
-- Local diversity metrics (LMS/SED/OSCR) for both methods
+- Local diversity metrics (LRD/SCD/TER; legacy keys lms/sed/oscr) for both methods
 - Difference analysis between GPT-guided and random mutations
 - Detailed statistics for each metric
 
@@ -382,7 +382,7 @@ For manual step-by-step execution, see `experiments/docs/PAPER_EXPERIMENTS.md` s
 Finally, generate figures and human-readable reports:
 
 ```sh
-# Figures (PC bar chart, multi-metric radar chart)
+# Figures (PCE bar chart, multi-metric radar chart)
 python -m experiments.analysis.generate_figures \
   --results-file ./experiments/runs/all_methods_results.json \
   --output-dir ./reports/figs
@@ -417,10 +417,10 @@ This experiment compares four different similarity scoring methods to determine 
 ### Evaluation Metrics
 
 The experiment evaluates each method using four diversity metrics:
-- **BPC (Behavior Parameter Coverage)**: Behavior parameter space combination coverage with logarithmic normalization
-- **DBCC (Driving Behavior Category Coverage)**: ISO 34502 behavior taxonomy coverage
-- **DPD (Driving Pattern Diversity)**: Trajectory pattern diversity using Fréchet distance and stabilized entropy normalization
-- **BCM (Behavior Matrix Coverage)**: Behavior combination coverage with logarithmic normalization
+- **PCE (Parameter Configuration Entropy)**: Hartley entropy over discretized behavior parameter configurations
+- **BCE (Behavior Category Entropy)**: Normalized Shannon entropy over ISO 34502 behavior taxonomy
+- **DPE (Driving Pattern Entropy)**: Normalized Shannon entropy over trajectory clusters (Fréchet distance + adaptive clustering)
+- **CCE (Combination Coverage Entropy)**: Hartley entropy over behavior combinations
 
 ### Running the Comparison Experiment
 
@@ -500,7 +500,7 @@ This will generate:
 - **comparison_report.json**: Detailed metrics comparison in JSON format
 - **comparison_report.md**: Human-readable comparison report with tables
 - **comparison_figures/**: Visualization charts including:
-  - Bar charts for each metric (BPC, DBCC, DPD, BCM)
+  - Bar charts for each metric (PCE, BCE, DPE, CCE)
   - Radar chart showing normalized comparison across all metrics
 
 ### Output Structure
@@ -528,34 +528,34 @@ experiments/runs/
 
 - **Automatic RAG Initialization**: RAG is automatically enabled for all methods (required for embedding and hybrid methods)
 - **Consistent Configuration**: All methods use the same experimental parameters for fair comparison
-- **Comprehensive Metrics**: All four diversity metrics (BPC, DBCC, DPD, BCM) are automatically collected
+- **Comprehensive Metrics**: All four diversity metrics (PCE, BCE, DPE, CCE) are automatically collected
 - **Detailed Analysis**: Comparison reports include mean, std, min, max, and run count for each metric
 
 ## Evaluation Metrics
 
-The framework uses four standardized evaluation metrics based on industry standards and regulations:
+The framework uses four standardized entropy-based evaluation metrics:
 
-### BPC (Behavior Parameter Coverage)
-- **Purpose**: Measures coverage of behavior parameter combinations
-- **Normalization**: Logarithmic normalization (`log(1 + x) / log(1 + M)`)
+### PCE (Parameter Configuration Entropy)
+- **Purpose**: Measures diversity of behavior parameter configurations
+- **Normalization**: Hartley entropy (`log(x) / log(M)`)
 - **Standards**: Based on ISO 15622, UNECE Reg.79, ISO 3888-1/2, ISO 7401, EuroNCAP
 - **Parameters**: Longitudinal/lateral acceleration, jerk, yaw rate, TTC
 
-### DBCC (Driving Behavior Category Coverage)
-- **Purpose**: Measures coverage of ISO 34502 behavior taxonomy classes
-- **Normalization**: Linear (no normalization needed)
+### BCE (Behavior Category Entropy)
+- **Purpose**: Measures distribution of ISO 34502 behavior taxonomy classes
+- **Normalization**: Normalized Shannon entropy (`-Σ p log p / log M`)
 - **Standards**: ISO 34502 behavior classification framework
 - **Categories**: 11 standard behavior classes (car-following, lane changing, emergency braking, etc.)
 
-### DPD (Driving Pattern Diversity)
+### DPE (Driving Pattern Entropy)
 - **Purpose**: Measures trajectory pattern diversity
-- **Normalization**: Stabilized entropy normalization (`H / (H_max + ε)`)
+- **Normalization**: Normalized Shannon entropy (`H / log K`)
 - **Method**: Fréchet distance with adaptive DBSCAN clustering
 - **Advantage**: More sensitive to physical trajectories than DTW
 
-### BCM (Behavior Matrix Coverage)
+### CCE (Combination Coverage Entropy)
 - **Purpose**: Measures coverage of behavior combinations
-- **Normalization**: Logarithmic normalization (`log(1 + T) / log(1 + T_max)`)
+- **Normalization**: Hartley entropy (`log(T) / log(T_max)`)
 - **Standards**: Based on UNECE R152, EuroNCAP, ISO 34502 thresholds
 - **Behaviors**: 12 standard behavior types (emergency braking, lane changing, cut-in, etc.)
 

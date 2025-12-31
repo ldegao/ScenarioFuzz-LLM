@@ -604,16 +604,16 @@ def extract_json(response):
         return None
 
 
-def add_answer1_to_database(response_json, database, max_size=30):
+def add_answer1_to_database(response_json, database, max_size=None):
     """
-    Adds the answer1 from response_json to the database and ensures the database size
-    does not exceed max_size. If the database exceeds max_size, it removes the oldest
-    entry before adding the new one.
+    Adds the answer1 from response_json to the database.
+    If max_size is provided, oldest entries are evicted to respect the limit;
+    if max_size is None, the database grows without a cap.
 
     Parameters:
     - response_json: JSON data containing answer1
     - database: OrderedDict storing answer1 data
-    - max_size: Maximum size of the database; removes the oldest entry if exceeded
+    - max_size: Optional maximum size; when None, no eviction is performed
 
     Returns:
     - Updated database
@@ -623,8 +623,8 @@ def add_answer1_to_database(response_json, database, max_size=30):
         if not isinstance(database, OrderedDict):
             database = OrderedDict(database)
 
-        # If the database is full, remove the oldest entry
-        if len(database) >= max_size:
+        # If a cap is provided and the database is full, remove the oldest entry
+        if max_size is not None and len(database) >= max_size:
             database.popitem(last=False)  # Removes the first-added item in OrderedDict
 
         # Add the new entry
@@ -749,7 +749,7 @@ if __name__ == "__main__":
             response = call_gpt(question, model_version=None, max_tokens=10000)  # 使用配置文件中的默认模型
             print("Response:", response)
             response_json = extract_json(response)
-            Scenario_database = add_answer1_to_database(response_json, Scenario_database, 30)
+            Scenario_database = add_answer1_to_database(response_json, Scenario_database, max_size=None)
             answer3_vehicle_info = get_answer3_vehicle_info(response_json)
             print("Answer3 Vehicle Info:", answer3_vehicle_info)
             mutate_info = answer3_vehicle_info

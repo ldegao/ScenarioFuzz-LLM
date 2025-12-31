@@ -1,0 +1,15 @@
+method: similarity
+num_scenarios: 100
+target: behavior
+town: 3
+timeout: 60
+density: 0.4
+rag_k: 5
+similarity_method: answer2
+hybrid_embedding_weight: 0.6
+feature_position_weight: 0.3
+feature_speed_weight: 0.3
+feature_angular_accel_weight: 0.2
+feature_relative_position_weight: 0.2
+debug: false
+

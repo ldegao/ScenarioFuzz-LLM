@@ -60,19 +60,19 @@ class ReportGenerator:
             f.write("for autonomous driving scenario generation methods.\n\n")
             
             # Metrics Results
-            f.write("## Metrics Results\n\n")
+            f.write("## Metrics Results (PCE/BCE/DPE/CCE)\n\n")
             
             for method_name, results in metrics_results.items():
                 f.write(f"### {method_name}\n\n")
                 
                 if 'pc' in results:
-                    f.write(f"- **Parameter Coverage (PC):** {results['pc']:.4f}\n")
+                    f.write(f"- **Parameter Configuration Entropy (PCE):** {results['pc']:.4f}\n")
                 if 'pec' in results:
-                    f.write(f"- **Behavior Coverage (PEC):** {results['pec']:.4f}\n")
+                    f.write(f"- **Behavior Category Entropy (BCE):** {results['pec']:.4f}\n")
                 if 'tcd' in results:
-                    f.write(f"- **Trajectory Diversity (TCD):** {results['tcd']:.4f}\n")
+                    f.write(f"- **Driving Pattern Entropy (DPE):** {results['tcd']:.4f}\n")
                 if 'bcm' in results:
-                    f.write(f"- **Behavior Matrix Coverage (BCM):** {results['bcm']:.4f}\n")
+                    f.write(f"- **Combination Coverage Entropy (CCE):** {results['bcm']:.4f}\n")
                 
                 f.write("\n")
             
@@ -80,8 +80,8 @@ class ReportGenerator:
             if comparison_data:
                 f.write("## Comparison Analysis\n\n")
                 f.write("### Method Comparison\n\n")
-                f.write("| Method | PC | PEC | TCD | BCM |\n")
-                f.write("|--------|----|----|----|----|\n")
+                f.write("| Method | PCE | BCE | DPE | CCE |\n")
+                f.write("|--------|-----|-----|-----|-----|\n")
                 
                 for method_name, results in metrics_results.items():
                     pc = results.get('pc', 0.0)

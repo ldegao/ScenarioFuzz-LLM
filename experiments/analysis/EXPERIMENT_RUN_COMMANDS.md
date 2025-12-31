@@ -12,7 +12,7 @@
 ### 方法 1: 使用删除脚本（推荐）
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 ./experiments/analysis/delete_failed_experiments.sh
 ```
 
@@ -24,7 +24,7 @@ cd /home/linshenghao/ScenarioFuzz-LLM
 ### 方法 2: 手动删除
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 rm -rf experiment_results/SimilarityComparison/SimilarityComparison_embedding_20251209_095659
 rm -rf experiment_results/SimilarityComparison/SimilarityComparison_feature_20251209_095726
 ```
@@ -37,7 +37,7 @@ rm -rf experiment_results/SimilarityComparison/SimilarityComparison_feature_2025
 
 **使用方法**:
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 ./experiments/scripts/run_similarity_comparison.sh \
   --num-scenarios 100 \
   --output-root ./experiment_results
@@ -65,7 +65,7 @@ cd /home/linshenghao/ScenarioFuzz-LLM
 #### 运行 embedding 方法
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 python3 -m experiments.runners.run_similarity_comparison \
   --num-scenarios 100 \
   --similarity-method embedding \
@@ -79,7 +79,7 @@ python3 -m experiments.runners.run_similarity_comparison \
 #### 运行 feature 方法
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 python3 -m experiments.runners.run_similarity_comparison \
   --num-scenarios 100 \
   --similarity-method feature \
@@ -93,7 +93,7 @@ python3 -m experiments.runners.run_similarity_comparison \
 #### 运行 answer2 方法
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 python3 -m experiments.runners.run_similarity_comparison \
   --num-scenarios 100 \
   --similarity-method answer2 \
@@ -107,7 +107,7 @@ python3 -m experiments.runners.run_similarity_comparison \
 #### 运行 hybrid 方法
 
 ```bash
-cd /home/linshenghao/ScenarioFuzz-LLM
+cd ~/ScenarioFuzz-LLM
 python3 -m experiments.runners.run_similarity_comparison \
   --num-scenarios 100 \
   --similarity-method hybrid \

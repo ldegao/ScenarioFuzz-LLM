@@ -175,6 +175,9 @@ class Config:
         self.rag_config_path = "./config/rag_config.json"
         # Similarity / feature configuration (used by SimilarityComparison)
         self.similarity_scoring_method = "answer2"
+        # New hybrid options:
+        #  - embedding_llm / bm25_llm / hybrid_llm : mix RAG score with LLM score
+        self.rag_llm_mix_weight = 0.5  # weight for RAG score when mixing with LLM
         self.hybrid_embedding_weight = 0.6
         self.feature_position_weight = 0.3
         self.feature_speed_weight = 0.3

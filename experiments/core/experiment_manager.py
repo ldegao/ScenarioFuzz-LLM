@@ -522,6 +522,10 @@ class ExperimentManager:
             '--feature-relative-position-weight', str(kwargs.get('feature_relative_position_weight', 0.2)),
             '--allow-out-dir-exists',
         ]
+
+        # Custom seed directory (e.g., reuse historical seed pool)
+        if kwargs.get('seed_dir'):
+            args_list.extend(['--seed-dir', str(kwargs.get('seed_dir'))])
         
         # Add determ-seed if provided
         if kwargs.get('determ_seed') is not None:

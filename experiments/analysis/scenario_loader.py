@@ -283,10 +283,10 @@ class ScenarioDataLoader:
         state = scenario.state
         
         # Check for critical fields needed by metrics
-        # PC needs: yaw_list, lon_speed_list (for acceleration calculation)
-        # PEC needs: speed, yaw_rate_list
-        # TCD needs: lon_speed_list, lat_speed_list, yaw_list
-        # BCM needs: crashed, stuck, laneinvaded, speed, speed_lim
+        # PCE needs: yaw_list, lon_speed_list (for acceleration calculation)
+        # BCE needs: speed, yaw_rate_list
+        # DPE needs: lon_speed_list, lat_speed_list, yaw_list
+        # CCE needs: crashed, stuck, laneinvaded, speed, speed_lim
         
         # At minimum, we need some state data
         has_speed_data = hasattr(state, 'speed') and state.speed is not None and len(state.speed) > 0

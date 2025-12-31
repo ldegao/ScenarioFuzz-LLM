@@ -4,8 +4,10 @@
 Metrics Calculator
 ------------------
 
-Calculates metrics (PC, PEC, TCD, BCM) from scenario data.
+Calculates metrics (PCE, BCE, DPE, CCE) from scenario data.
 This script is decoupled from the fuzzing loop and can be run offline.
+Legacy output keys remain `pc/pec/tcd/bcm` for compatibility (mapping to
+PCE/BCE/DPE/CCE respectively).
 
 Usage:
     python -m experiments.analysis.calculate_metrics \\
@@ -111,15 +113,20 @@ def calculate_metrics_from_scenarios(
     
     # Import metrics calculators
     try:
-        from metrics import ParameterCoverage, BehaviorCoverage, TrajectoryDiversity, BehaviorMatrix
+        from metrics import (
+            ParameterConfigurationEntropy,
+            BehaviorCategoryEntropy,
+            DrivingPatternEntropy,
+            CombinationCoverageEntropy,
+        )
     except ImportError as e:
         raise ImportError(f"Failed to import metrics modules: {e}. Make sure metrics package is available.")
     
     # Initialize calculators
-    pc_calculator = ParameterCoverage()
-    pec_calculator = BehaviorCoverage()
-    tcd_calculator = TrajectoryDiversity()
-    bcm_calculator = BehaviorMatrix()
+    pce_calculator = ParameterConfigurationEntropy()
+    bce_calculator = BehaviorCategoryEntropy()
+    dpe_calculator = DrivingPatternEntropy()
+    cce_calculator = CombinationCoverageEntropy()
     
     # Calculate cumulative metrics
     # We need to use ALL scenarios (not just new ones) for cumulative calculation
@@ -128,13 +135,13 @@ def calculate_metrics_from_scenarios(
     
     # Helper to compute metrics for a list of scenarios (cumulative up to that point)
     def _compute_metrics_for_subset(subset):
-        pc_val = ParameterCoverage().calculate_coverage(subset)
-        pec_val = BehaviorCoverage().calculate_coverage(subset)
-        tcd_res = TrajectoryDiversity().calculate_coverage(subset)
-        tcd_val = tcd_res.get('diversity_score', 0.0) if isinstance(tcd_res, dict) else float(tcd_res)
-        bcm_res = BehaviorMatrix().calculate_coverage(subset)
-        bcm_val = bcm_res.get('coverage_ratio', 0.0) if isinstance(bcm_res, dict) else float(bcm_res)
-        return pc_val, pec_val, tcd_val, bcm_val
+        pce_val = ParameterConfigurationEntropy().calculate_coverage(subset)
+        bce_val = BehaviorCategoryEntropy().calculate_coverage(subset)
+        dpe_res = DrivingPatternEntropy().calculate_coverage(subset)
+        dpe_val = dpe_res.get('diversity_score', 0.0) if isinstance(dpe_res, dict) else float(dpe_res)
+        cce_res = CombinationCoverageEntropy().calculate_coverage(subset)
+        cce_val = cce_res.get('coverage_ratio', 0.0) if isinstance(cce_res, dict) else float(cce_res)
+        return pce_val, bce_val, dpe_val, cce_val
     
     print(f"[CalculateMetrics] Calculating cumulative and incremental metrics for {len(all_scenarios_for_calculation)} scenario(s)")
     
@@ -205,7 +212,7 @@ def calculate_metrics_from_scenarios(
     all_records = load_records_from_jsonl(str(records_path))
     summary = aggregate_run_metrics(all_records)
 
-    # 附加局部多样性指标（LMS/SED/OSCR）
+    # 附加局部多样性指标（LRD/SCD/TER；字段名兼容 lms/sed/oscr）
     local_diversity = summarize_local_diversity(scenarios)
     summary.update(local_diversity)
     
@@ -242,7 +249,7 @@ def calculate_metrics_from_scenarios(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Calculate metrics (PC, PEC, TCD, BCM) from scenario data"
+        description="Calculate metrics (PCE, BCE, DPE, CCE) from scenario data"
     )
     parser.add_argument(
         "--experiment-dir",
@@ -290,11 +297,11 @@ def main():
                 print(f"    - {error}")
         
         if result['metrics']:
-            print(f"\n  Final metrics:")
-            print(f"    PC:  {result['metrics']['pc']:.6f}")
-            print(f"    PEC: {result['metrics']['pec']:.6f}")
-            print(f"    TCD: {result['metrics']['tcd']:.6f}")
-            print(f"    BCM: {result['metrics']['bcm']:.6f}")
+            print(f"\n  Final metrics (legacy keys pc/pec/tcd/bcm map to PCE/BCE/DPE/CCE):")
+            print(f"    PCE:  {result['metrics']['pc']:.6f}")
+            print(f"    BCE:  {result['metrics']['pec']:.6f}")
+            print(f"    DPE:  {result['metrics']['tcd']:.6f}")
+            print(f"    CCE:  {result['metrics']['bcm']:.6f}")
         
     except Exception as e:
         print(f"[CalculateMetrics] ERROR: {e}")

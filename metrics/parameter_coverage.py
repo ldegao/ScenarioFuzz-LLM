@@ -1,14 +1,12 @@
 """
-Behavior Parameter Coverage (BPC) Metric
-Evaluates coverage of vehicle behavior parameter space combinations
+Parameter Configuration Entropy (PCE)
+Evaluates coverage of vehicle behavior parameter space combinations using
+Hartley entropy (support size) normalization:
 
-Replaces the original PC metric which relied on subjective weather/NPC parameters.
-BPC focuses entirely on vehicle behavior parameters based on industry standards:
-- ISO 15622, UNECE Reg.79: Longitudinal acceleration
-- ISO 3888-1/2: Lateral acceleration
-- UNECE braking test: Jerk
-- ISO 7401: Steering/yaw rate
-- EuroNCAP AEB: TTC (Time-to-Collision)
+    PCE = log(x) / log(M)
+
+where x is the number of observed unique parameter configurations and
+M is the theoretical maximum configuration count from the parameter grid.
 """
 
 import numpy as np
@@ -20,11 +18,10 @@ from scenario import Scenario
 from metrics.behavior_parameters import BehaviorParameterExtractor
 
 
-class BehaviorParameterCoverage:
+class ParameterConfigurationEntropy:
     """
-    Calculates behavior parameter space coverage metric
-    BPC = |covered behavior parameter combinations| / |theoretical maximum combinations|
-    
+    Calculates Hartley-entropy-based parameter configuration diversity.
+    PCE = log(|G_obs|) / log(|G|) where G is the discretized parameter grid.
     All parameters are based on industry standards and use standardized binning.
     """
     
@@ -180,15 +177,9 @@ class BehaviorParameterCoverage:
         """
         Calculate behavior parameter coverage for a list of scenarios
         
-        Uses logarithmic normalization to handle the large parameter space
-        and avoid numerical precision issues with very small coverage ratios.
-        
-        Normalization formula: coverage = log(1 + covered) / log(1 + max_combinations)
-        This ensures:
-        - When covered = 0: coverage = 0
-        - When covered = max: coverage ≈ 1 (asymptotically)
-        - Avoids numerical precision issues (e.g., 500/266805 ≈ 0.0019 becomes more meaningful)
-        - Provides better discrimination for small coverage values
+        Uses Hartley entropy normalization to handle the large parameter space:
+        PCE = log(|covered|) / log(|G|), where |G| is the theoretical grid size.
+        When no combinations are covered, returns 0.
         
         Args:
             scenarios: List of Scenario objects
@@ -206,29 +197,19 @@ class BehaviorParameterCoverage:
                 self.covered_combinations.add(combination)
         
         covered_count = len(self.covered_combinations)
-        
         if covered_count == 0:
             return 0.0
         
-        # Calculate theoretical maximum combinations
+        # Theoretical maximum combinations
         grid_sizes = [len(values) for values in self.parameter_grid.values()]
         max_combinations = np.prod(grid_sizes)
         
-        # Use logarithmic normalization to handle large parameter space
-        # Formula: coverage = log(1 + covered) / log(1 + max_combinations)
-        # This ensures:
-        # - When covered = 0: coverage = 0
-        # - When covered = max: coverage ≈ 1 (asymptotically)
-        # - Avoids numerical precision issues with very small ratios
-        # - Provides better discrimination for small coverage values
+        if max_combinations <= 1:
+            return 0.0
         
-        if max_combinations > 0:
-            # Logarithmic normalization to handle large parameter space
-            # This avoids numerical precision issues with very small ratios
-            log_coverage = np.log1p(covered_count) / np.log1p(max_combinations)
-            return float(log_coverage)
-        
-        return 0.0
+        # Hartley entropy normalization (support entropy)
+        pce = np.log(covered_count) / np.log(max_combinations)
+        return float(np.clip(pce, 0.0, 1.0))
     
     def calculate_coverage_detailed(self, scenarios: List[Scenario]) -> Dict[str, float]:
         """
@@ -259,16 +240,19 @@ class BehaviorParameterCoverage:
         grid_sizes = [len(values) for values in self.parameter_grid.values()]
         max_combinations = np.prod(grid_sizes)
         
-        # Calculate both linear and logarithmic coverage
-        if max_combinations > 0:
-            linear_coverage = covered_count / max_combinations
-            log_coverage = np.log1p(covered_count) / np.log1p(max_combinations)
-        else:
-            linear_coverage = 0.0
-            log_coverage = 0.0
+        if max_combinations <= 1:
+            return {
+                'coverage': 0.0,
+                'covered_count': int(covered_count),
+                'max_combinations': int(max_combinations),
+                'linear_coverage': 0.0
+            }
+        
+        linear_coverage = covered_count / max_combinations
+        log_coverage = np.log(covered_count) / np.log(max_combinations) if covered_count > 0 else 0.0
         
         return {
-            'coverage': float(log_coverage),  # Normalized coverage (primary metric)
+            'coverage': float(np.clip(log_coverage, 0.0, 1.0)),  # PCE
             'covered_count': int(covered_count),
             'max_combinations': int(max_combinations),
             'linear_coverage': float(linear_coverage)  # For reference/debugging
@@ -297,5 +281,6 @@ class BehaviorParameterCoverage:
         self.covered_combinations.clear()
 
 
-# Backward compatibility alias
-ParameterCoverage = BehaviorParameterCoverage
+# New name (preferred) and backward compatibility aliases
+ParameterCoverage = ParameterConfigurationEntropy
+BehaviorParameterCoverage = ParameterConfigurationEntropy

@@ -24,25 +24,25 @@ def test_extract_json_success_and_failure():
     assert gpt.extract_json(bad or "") is None
 
 
-def test_add_answer1_to_database_rotation():
+def test_add_answer1_to_database_unbounded_then_bounded():
+    # Unbounded mode (default): no eviction
     database = OrderedDict()
-    max_size = 3
-
     for i in range(5):
         response_json = {"answer1": {"Description": f"scenario {i}"}}
-        database = gpt.add_answer1_to_database(response_json, database, max_size=max_size)
-        assert isinstance(database, OrderedDict)
-        # Size should never exceed max_size
-        assert len(database) <= max_size
+        database = gpt.add_answer1_to_database(response_json, database)
+    assert len(database) == 5
+    assert database["4"]["Description"] == "scenario 4"
 
-    # Oldest entries should have been rotated out and newest kept
-    descriptions = list(database.values())
-    # Values in the database are dicts like {"Description": "..."}
-    desc_texts = [d.get("Description", "") for d in descriptions]
-    # Ensure we have exactly max_size entries
-    assert len(desc_texts) == max_size
-    # Newest scenario (scenario 4) should be present
+    # Bounded mode: cap to max_size and evict oldest
+    bounded = OrderedDict()
+    max_size = 3
+    for i in range(5):
+        response_json = {"answer1": {"Description": f"scenario {i}"}}
+        bounded = gpt.add_answer1_to_database(response_json, bounded, max_size=max_size)
+    assert len(bounded) == max_size
+    desc_texts = [d.get("Description", "") for d in bounded.values()]
     assert "scenario 4" in desc_texts
+    assert "scenario 0" not in desc_texts
 
 
 def test_get_frame_data_random_and_specific(tmp_path):

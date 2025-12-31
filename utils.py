@@ -336,12 +336,21 @@ def _on_collision(event, state):
         # ignore collision happened AFTER simulation ends
         # (can happen because of sluggish garbage collection of Carla)
         return
-    if event.other_actor.type_id != "static.road":
+    try:
+        # Check if other_actor is still valid (weak_ptr might be invalid)
+        other_actor = event.other_actor
+        if other_actor is None:
+            return
+        type_id = other_actor.type_id
+    except RuntimeError:
+        # other_actor has been destroyed, ignore this collision event
+        return
+    if type_id != "static.road":
         if not state.crashed:
-            print("COLLISION:", event.other_actor.type_id)
+            print("COLLISION:", type_id)
             # do not count collision while spawning ego vehicle (hard drop)
             state.crashed = True
-            state.collision_to = event.other_actor.id
+            state.collision_to = other_actor.id
             state.min_dist = 0
             state.min_dist_frame = state.num_frames
 

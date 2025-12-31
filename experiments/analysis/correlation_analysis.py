@@ -2,7 +2,7 @@
 """
 Correlation analysis between diversity metrics.
 
-This script analyzes correlations between PC, PEC, TCD, and BCM metrics
+This script analyzes correlations between PCE, BCE, DPE, and CCE metrics
 across all similarity methods and generates correlation heatmaps.
 """
 
@@ -211,7 +211,7 @@ def generate_correlation_report(correlation_results: Dict, output_dir: Path):
     md_path = output_dir / "correlation_analysis.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("# Correlation Analysis Report\n\n")
-        f.write("This report analyzes correlations between diversity metrics (PC, PEC, TCD, BCM).\n\n")
+        f.write("This report analyzes correlations between diversity metrics (PCE, BCE, DPE, CCE).\n\n")
         
         f.write("## Correlation Results\n\n")
         f.write("| Metric Pair | Pearson r | Pearson p | Significant | Spearman r | Spearman p | Significant | N |\n")

@@ -4,9 +4,7 @@ from pathlib import Path
 import pytest
 
 
-EXPERIMENT_ROOT = Path(
-    "/home/linshenghao/ScenarioFuzz-LLM/experiment_results/SimilarityComparison"
-)
+EXPERIMENT_ROOT = Path(__file__).resolve().parents[2] / "experiment_results" / "SimilarityComparison"
 RECENT_EXPS = [
     "SimilarityComparison_answer2_20251215_110047",
     "SimilarityComparison_embedding_20251215_115037",

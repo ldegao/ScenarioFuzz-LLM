@@ -82,8 +82,8 @@ def generate_comprehensive_report(base_dir: Path, output_dir: Path):
         f.write("## Method Comparison\n\n")
         if comparison_report:
             f.write("### Overall Performance Summary\n\n")
-            f.write("| Method | PC (mean±std) | PEC (mean±std) | TCD (mean±std) | BCM (mean±std) | Runs |\n")
-            f.write("|--------|---------------|----------------|----------------|----------------|------|\n")
+            f.write("| Method | PCE (mean±std) | BCE (mean±std) | DPE (mean±std) | CCE (mean±std) | Runs |\n")
+            f.write("|--------|----------------|----------------|----------------|----------------|------|\n")
             
             for method in ["answer2", "embedding", "feature", "hybrid"]:
                 if method not in comparison_report:

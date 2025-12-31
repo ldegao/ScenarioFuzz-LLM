@@ -44,7 +44,7 @@ import pickle
 import concurrent.futures
 import math
 from types import SimpleNamespace
-from typing import List
+from typing import List, Any
 from subprocess import Popen, PIPE
 
 import docker
@@ -140,6 +140,61 @@ PROXY = {
 
 with open(PROMPT_PATH, 'r') as f:
     prompt = f.read()
+
+
+def need_snapshot_stub(state, frame_id: int) -> bool:
+    """
+    Placeholder for snapshot sampling policy (NeedSnapshot in pseudocode).
+    Returns False by default to avoid changing runtime behavior.
+    """
+    return False
+
+
+def extract_snapshot_stub(state) -> dict:
+    """
+    Placeholder for snapshot extraction. Returns a shallow state view.
+    """
+    return {
+        "min_dist": getattr(state, "min_dist", None),
+        "min_dist_frame": getattr(state, "min_dist_frame", None),
+    }
+
+
+def low_violation_severity_stub(state) -> bool:
+    """
+    Placeholder to decide whether to use heuristic path (no LLM).
+    """
+    return False
+
+
+def local_heuristic_analysis_stub(snapshot: dict, violation: Any) -> dict:
+    """
+    Lightweight heuristic analysis stub when skipping LLM.
+    """
+    return {
+        "result": "heuristic_placeholder",
+        "snapshot": snapshot,
+        "violation": violation,
+    }
+
+
+def update_bug_priority_memory_stub(rag_engine, snapshot: Any):
+    """
+    Placeholder to elevate bug-triggering scenarios into high-priority memory.
+    Best-effort and non-blocking.
+    """
+    if not rag_engine:
+        return
+    try:
+        rag_engine.insert_memory(
+            vec=None,
+            snapshot=snapshot,
+            analysis={"tag": "bug"},
+            priority="high",
+            rebuild_index=False,
+        )
+    except Exception as e:
+        print(f"[RAG] Warning: failed to mark bug memory priority: {e}")
 
 
 # monitor carla
@@ -540,6 +595,10 @@ def evaluation(ind: Scenario):
         # GPT / RAG-based evaluation and logging (optional)
         # This block can be disabled (e.g., for TM-Fuzzer non-GPT baseline)
         answer3_vehicle_info = {}
+        overall_similarity = 0
+        rag_score = None
+        llm_score = None
+        need_gpt = False
         
         disable_similarity = getattr(conf, "disable_similarity", False)
         disable_guided_mutation = getattr(conf, "disable_guided_mutation", False)
@@ -561,9 +620,19 @@ def evaluation(ind: Scenario):
             scenario_description = str(
                 gpt.get_frame_data(time_record_path, ind.state.min_dist_frame)
             ).replace("\n", "").replace(' ', '')
+
+            # Snapshot-level hook (disabled by default, no side effects)
+            if getattr(conf, "enable_snapshot_eval", False):
+                if need_snapshot_stub(ind.state, getattr(ind.state, "min_dist_frame", 0)):
+                    snapshot_payload = extract_snapshot_stub(ind.state)
+                    if low_violation_severity_stub(ind.state):
+                        _ = local_heuristic_analysis_stub(snapshot_payload, violation=None)
+                    else:
+                        # Placeholder: LLM/RAG path would consume snapshot_payload
+                        pass
             
             # Check if we should use non-GPT similarity methods
-            if similarity_method in ["embedding", "feature", "hybrid"]:
+            if similarity_method in ["embedding", "feature", "hybrid", "embedding_llm", "bm25_llm", "hybrid_llm"]:
                 # Use non-GPT similarity calculation methods
                 try:
                     from similarity_calculator import (
@@ -574,9 +643,9 @@ def evaluation(ind: Scenario):
                         extract_features_from_text
                     )
                     
-                    # Ensure RAG engine is initialized for embedding and hybrid methods
+                    # Ensure RAG engine is initialized for embedding / hybrid / bm25 variants
                     rag_engine = None
-                    if similarity_method in ["embedding", "hybrid"]:
+                    if similarity_method in ["embedding", "hybrid", "embedding_llm", "bm25_llm", "hybrid_llm"]:
                         if conf and conf.enable_rag:
                             try:
                                 # Initialize RAG engine if not exists (reuse existing logic)
@@ -693,6 +762,67 @@ def evaluation(ind: Scenario):
                                 hybrid_weights
                             )
                         print(f"[Similarity] Hybrid similarity score: {overall_similarity}")
+
+                    elif similarity_method == "embedding_llm":
+                        if rag_engine is None:
+                            print("[Similarity] Warning: RAG engine not available for embedding_llm, rag_score set to 0")
+                            rag_score = 0
+                        else:
+                            rag_score = calculate_embedding_similarity(
+                                scenario_description,
+                                scenario_db_copy,
+                                rag_engine
+                            )
+                            print(f"[Similarity] RAG embedding score (for mixing): {rag_score}")
+                        need_gpt = True
+                        overall_similarity = 0  # will be overwritten after GPT mix
+
+                    elif similarity_method == "bm25_llm":
+                        if rag_engine is None or not getattr(conf, 'use_hybrid_search', False) or not hasattr(rag_engine, 'hybrid_retriever') or rag_engine.hybrid_retriever is None:
+                            print("[Similarity] Warning: RAG BM25 not available for bm25_llm, rag_score set to 0")
+                            rag_score = 0
+                        else:
+                            bm25_results = rag_engine.hybrid_retriever.bm25.retrieve(scenario_description, k=conf.rag_k)
+                            if bm25_results:
+                                max_score = max(score for _, score in bm25_results)
+                                if max_score > 0:
+                                    rag_score = sum(score / max_score for _, score in bm25_results) / len(bm25_results)
+                                else:
+                                    rag_score = 0
+                            else:
+                                rag_score = 0
+                            print(f"[Similarity] RAG BM25 score (normalized, for mixing): {rag_score}")
+                        need_gpt = True
+                        overall_similarity = 0  # will be overwritten after GPT mix
+
+                    elif similarity_method == "hybrid_llm":
+                        scenario_features = extract_features_from_json(time_record_path, ind.state.min_dist_frame)
+                        if not scenario_features:
+                            scenario_features = extract_features_from_text(scenario_description)
+
+                        hybrid_weights = {
+                            "embedding_weight": getattr(conf, 'hybrid_embedding_weight', 0.6),
+                            "feature_weights": {
+                                "position_weight": getattr(conf, 'feature_position_weight', 0.3),
+                                "speed_weight": getattr(conf, 'feature_speed_weight', 0.3),
+                                "angular_accel_weight": getattr(conf, 'feature_angular_accel_weight', 0.2),
+                                "relative_position_weight": getattr(conf, 'feature_relative_position_weight', 0.2)
+                            }
+                        }
+
+                        if rag_engine is None:
+                            print("[Similarity] Warning: RAG engine not available for hybrid_llm, using feature-only rag_score=0")
+                            rag_score = 0
+                        else:
+                            rag_score = calculate_hybrid_similarity(
+                                scenario_description,
+                                scenario_features,
+                                scenario_db_copy,
+                                rag_engine,
+                                hybrid_weights
+                            )
+                        need_gpt = True
+                        overall_similarity = 0  # will be overwritten after GPT mix
                     
                     # Set answer3_vehicle_info to empty for non-GPT methods
                     answer3_vehicle_info = {}
@@ -704,7 +834,7 @@ def evaluation(ind: Scenario):
                     answer3_vehicle_info = {}
             
             # Use GPT-based evaluation for answer2 method or if enable_gpt_evaluation is True
-            elif similarity_method == "answer2" and (not conf or getattr(conf, "enable_gpt_evaluation", True)):
+            elif (similarity_method == "answer2" or need_gpt) and (not conf or getattr(conf, "enable_gpt_evaluation", True)):
                 # Keep calling GPT until we obtain a valid JSON response with a numeric similarity.
                 MAX_GPT_RETRIES = 5
                 gpt_retry_count = 0
@@ -766,7 +896,8 @@ def evaluation(ind: Scenario):
                         continue
 
                     try:
-                        overall_similarity = int(gpt.get_overall_similarity(response_json))
+                        llm_score = int(gpt.get_overall_similarity(response_json))
+                        overall_similarity = llm_score
                     except Exception as e:
                         gpt_retry_count += 1
                         if gpt_retry_count >= MAX_GPT_RETRIES:
@@ -880,7 +1011,7 @@ def evaluation(ind: Scenario):
 
                     try:
                         with _scenario_db_lock:
-                            Scenario_database = gpt.add_answer1_to_database(response_json, Scenario_database, 30)
+                            Scenario_database = gpt.add_answer1_to_database(response_json, Scenario_database, max_size=None)
                             if conf and getattr(conf, "scenario_db", None):
                                 _save_scenario_database(conf.scenario_db, Scenario_database)
                     except Exception as e:
@@ -898,6 +1029,14 @@ def evaluation(ind: Scenario):
                             print(f"[RAG] Warning: Failed to add to RAG knowledge base: {e}")
 
                     answer3_vehicle_info = gpt.get_answer3_vehicle_info(response_json)
+                    # If mixing RAG + LLM, blend scores after we have llm_score
+                    if need_gpt and similarity_method in ["embedding_llm", "bm25_llm", "hybrid_llm"]:
+                        mix_w = getattr(conf, "rag_llm_mix_weight", 0.5) if conf else 0.5
+                        rag_component = rag_score if rag_score is not None else 0
+                        llm_component = llm_score if llm_score is not None else 0
+                        overall_similarity = mix_w * rag_component + (1 - mix_w) * llm_component
+                        print(f"[Similarity] Mixed RAG+LLM score (w={mix_w}): {overall_similarity} (rag={rag_component}, llm={llm_component})")
+
                     print("Overall Similarity:", overall_similarity)
                     print("Answer3 Vehicle Info:", answer3_vehicle_info)
                     break
@@ -959,6 +1098,15 @@ def evaluation(ind: Scenario):
     # mutation loop ends
     if ind.found_error:
         print("[-]error detected. start a new cycle with a new seed")
+        # Best-effort hook to boost bug memories in RAG (if available)
+        if conf and getattr(conf, "enable_rag", False) and hasattr(evaluation, "rag_engine"):
+            try:
+                update_bug_priority_memory_stub(
+                    getattr(evaluation, "rag_engine", None),
+                    snapshot=scenario_description if 'scenario_description' in locals() else ind.state,
+                )
+            except Exception as e:
+                print(f"[RAG] Warning: failed to update bug priority memory: {e}")
     
     # Note: Metrics calculation has been moved to experiments/analysis/calculate_metrics.py
     # This decouples data collection from metrics calculation, allowing:

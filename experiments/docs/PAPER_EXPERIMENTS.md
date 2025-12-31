@@ -23,8 +23,7 @@
   - Docker 与 ROS（TM-Fuzzer 基线依赖）
 - 已安装 Python 依赖（建议使用虚拟环境）：
   - 在仓库根目录执行 `pip install -r requirements.txt`（或按照主 README 的说明）
-- 默认假设当前工作目录为仓库根目录：
-  - `/home/linshenghao/ScenarioFuzz-LLM`
+- 默认假设当前工作目录为仓库根目录（例如 `~/ScenarioFuzz-LLM`）
 
 环境的具体初始化与清理逻辑由：
 
@@ -223,8 +222,8 @@ python -m experiments.analysis.generate_figures \
 ```
 
 - 输出：
-  - `./reports/figs/bpc_coverage.png`：BPC 对比柱状图
-  - `./reports/figs/metrics_radar.png`：BPC/DBCC/DPD/BCM 雷达图
+  - `./reports/figs/pce_coverage.png`：PCE 对比柱状图
+  - `./reports/figs/metrics_radar.png`：PCE/BCE/DPE/CCE 雷达图
 
 #### 5.2 仅生成文本/JSON 报告
 
@@ -350,11 +349,28 @@ experiments/docs/             # 当前文档（Quick Start、Paper Experiments�
 
 ### 9. 实验 3：局部变异多样性对比（GPT 指导 vs 随机）
 
-该实验聚焦“同一初始种子附近”的变异行为，引入新的局部多样性指标（不与 BPC / DBCC / DPD / BCM 重复）：
+该实验聚焦“同一初始种子附近”的变异行为，引入新的局部多样性指标（不与 PCE / BCE / DPE / CCE 重复）：
 
-- **LMS**（Local Mutation Spread）：同 seed 的变异样本成对距离均值。
-- **SED**（Seed Expansion Distance）：变异样本相对 seed 代表的平均偏移。
-- **OSCR**（Over-Seed Coverage Rate）：变异样本超出 seed 典型半径 τ 的比例。
+- **LRD**（Local Rao Diversity，原 LMS）：同 seed 的变异样本成对距离均值（Rao quadratic entropy 族的均匀权重情形）。
+- **SCD**（Seed-Conditional Distortion，原 SED）：变异样本相对 seed 代表的平均偏移（失真/率失真视角）。
+- **TER**（Typical-set Escape Rate，原 OSCR）：变异样本超出 seed 典型半径 τ 的比例（典型集之外的概率）。
+
+信息论对齐的定义（与现有代码一一对应，计算保持不变）：
+- 对 seed \(s_k\) 的变异集合 \(\mathcal{M}_k\)，记特征 \(z_{k,j}=\phi(x_{k,j})\)。局部 Rao 多样性（LRD，键 `lms`）：
+  \[
+    Q_k=\frac{2}{n_k(n_k-1)}\sum_{p<q} d(z_{k,p},z_{k,q}),\qquad
+    \mathrm{LRD}=\frac{1}{|\mathcal{K}_{\ge2}|}\sum_{k\in\mathcal{K}_{\ge2}} Q_k.
+  \]
+- 种子条件失真（SCD，键 `sed`）：以 seed 代表 \(c_k\) 为中心，平均半径
+  \[
+    D_k=\frac{1}{n_k}\sum_j d(z_{k,j},c_k),\qquad
+    \mathrm{SCD}=\frac{1}{N}\sum_k\sum_j d(z_{k,j},c_k).
+  \]
+- 典型集逃逸率（TER，键 `oscr`）：设 \(\tau=\mathrm{median}\{\min_{l\neq k} d(c_k,c_l)\}\)，则
+  \[
+    \mathrm{TER}=\frac{1}{|\mathcal{M}|}\sum_{x\in\mathcal{M}}\mathbf{1}[\,\min_k d(\phi(x),c_k) > \tau\,].
+  \]
+上述指标可分别对应 Rao quadratic entropy、期望失真、典型集之外概率，方便跨领域解读。
 
 **实验说明**：
 
@@ -412,9 +428,18 @@ python -m experiments.runners.run_local_diversity_comparison \
 **输出说明**：
 
 - 对比结果 JSON 包含：
-  - `gpt`: GPT 指导变异的 LMS/SED/OSCR 指标
-  - `random`: 随机变异的 LMS/SED/OSCR 指标
+  - `gpt`: GPT 指导变异的 LRD/SCD/TER 指标（保存键仍为 lms/sed/oscr）
+  - `random`: 随机变异的 LRD/SCD/TER 指标（保存键仍为 lms/sed/oscr）
   - `delta_lms/sed/oscr`: 两组指标的差值
-- 若需先写入单次运行的新指标，可执行 `python -m experiments.analysis.calculate_metrics --experiment-dir <dir>`，生成的 `metrics/metrics_summary.json` 将附带 LMS/SED/OSCR。
+- 若需先写入单次运行的新指标，可执行 `python -m experiments.analysis.calculate_metrics --experiment-dir <dir>`，生成的 `metrics/metrics_summary.json` 将附带 LRD/SCD/TER（字段名 lms/sed/oscr 保持兼容）。
+
+**本次实验输出目录（统一记录）**：
+
+- GPT 指导变异（开启指导）：`experiment_results/ScenarioFuzz-LLM/scenariofuzz-llm_20251224_170025`
+- 随机变异（关闭指导）：`experiment_results/ScenarioFuzz-LLM/scenariofuzz-llm_20251225_073610`
+- 一次性对比结果：`experiment_results/local_diversity_comparison.json`
+- 增量对比结果与图：`experiment_results/local_diversity_incremental.json`，`experiment_results/local_diversity_incremental.png`
+
+说明：早期实验可能位于 `experiments/runs/`（旧默认根目录），本次统一采用 `--output-root ./experiment_results`，后续复现实验请保持一致路径。
 
 

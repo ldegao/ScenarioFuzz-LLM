@@ -253,8 +253,8 @@ def generate_efficiency_report(efficiency_data: Dict[str, Dict], efficiency_metr
         
         # Performance per cost
         f.write("\n## Performance per Cost\n\n")
-        f.write("| Method | PC per $ | PEC per $ | TCD per $ | BCM per $ | Combined Efficiency |\n")
-        f.write("|--------|----------|-----------|-----------|-----------|---------------------|\n")
+        f.write("| Method | PCE per $ | BCE per $ | DPE per $ | CCE per $ | Combined Efficiency |\n")
+        f.write("|--------|-----------|-----------|-----------|-----------|---------------------|\n")
         
         for method in ["answer2", "embedding", "feature", "hybrid"]:
             if method not in efficiency_metrics:
@@ -272,8 +272,8 @@ def generate_efficiency_report(efficiency_data: Dict[str, Dict], efficiency_metr
         
         # Performance per 1k tokens
         f.write("\n## Performance per 1K Tokens\n\n")
-        f.write("| Method | PC per 1K | PEC per 1K | TCD per 1K | BCM per 1K |\n")
-        f.write("|--------|-----------|------------|------------|------------|\n")
+        f.write("| Method | PCE per 1K | BCE per 1K | DPE per 1K | CCE per 1K |\n")
+        f.write("|--------|------------|------------|------------|------------|\n")
         
         for method in ["answer2", "embedding", "feature", "hybrid"]:
             if method not in efficiency_metrics:

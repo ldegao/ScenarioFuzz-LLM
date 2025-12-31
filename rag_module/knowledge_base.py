@@ -5,6 +5,7 @@ Manages scenario knowledge base, supports loading from multiple data sources
 
 import json
 import os
+import time
 from typing import List, Dict, Any
 from pathlib import Path
 
@@ -204,24 +205,36 @@ class KnowledgeBase:
     
     def add_scenario(self, scenario: Dict[str, Any]) -> bool:
         """
-        Add a single scenario to the knowledge base
-        
-        Args:
-            scenario: Dictionary containing scenario information
-            
-        Returns:
-            True if successful
+        Add a single scenario to the knowledge base.
+        Lightweight guards only; priority/metadata are optional.
         """
         if not isinstance(scenario, dict):
             print("[KnowledgeBase] Error: scenario must be a dictionary")
             return False
-        
+
         # Ensure scenario has required fields
-        if 'description' not in scenario:
-            print("[KnowledgeBase] Warning: scenario missing 'description' field")
-        
+        if 'description' not in scenario and 'text' not in scenario:
+            print("[KnowledgeBase] Warning: scenario missing 'description'/'text' field")
+
+        # Initialize optional metadata for priority / access stats if absent
+        scenario.setdefault("priority", "low")
+        scenario.setdefault("access_count", 0)
+        scenario.setdefault("last_access_ts", None)
+
         self.scenarios.append(scenario)
         return True
+
+    def update_access_stats(self, indices: List[int]):
+        """
+        Increment access_count and update last_access_ts for given scenario indices.
+        This keeps statistics in sync with retrieval usage.
+        """
+        now = time.time()
+        for idx in indices:
+            if 0 <= idx < len(self.scenarios):
+                scenario = self.scenarios[idx]
+                scenario["access_count"] = scenario.get("access_count", 0) + 1
+                scenario["last_access_ts"] = now
     
     def get_all_scenarios(self) -> List[Dict[str, Any]]:
         """

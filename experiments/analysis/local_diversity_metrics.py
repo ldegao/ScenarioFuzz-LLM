@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Local Diversity Metrics (LMS / SED / OSCR)
-------------------------------------------
+Local Diversity Metrics (LRD / SCD / TER; legacy keys lms/sed/oscr)
+-------------------------------------------------------------------
 
 用于“同初始场景下，GPT 指导变异 vs 随机变异”的局部多样性度量。
-以结构化物理特征向量 φ(x) 计算三类指标：
-  - LMS：局部变异多样性指数，衡量同一 seed 周围的成对离散度
-  - SED：种子扩展距离，衡量变异样本距离其 seed 的平均偏移
-  - OSCR：超出初始覆盖率，衡量变异样本超出 seed 典型邻域的比例
+以结构化物理特征向量 φ(x) 计算三类指标（计算逻辑保持原样）：
+  - LRD（Local Rao Diversity，原 LMS）：同一 seed 的成对距离均值，对应 Rao quadratic entropy 族的均匀权重情形
+  - SCD（Seed-Conditional Distortion，原 SED）：变异样本到 seed 代表点的平均距离，对应失真/率失真中的 expected distortion
+  - TER（Typical-set Escape Rate，原 OSCR）：样本落在 seed 典型半径 τ 之外的比例，等价于典型集外的概率质量
+
+计算不变，输出字段仍使用兼容键 lms/sed/oscr。
 
 特征构建基于 Scenario.state 中的基础运动学信号（速度、横/纵向速度、偏航率等），
 并使用 BehaviorParameterExtractor 提取 TTC/THW 等补充信息。
@@ -152,7 +154,7 @@ def _select_seed_representative(indices: List[int], scenario_ids: List[int], vec
 
 def compute_local_diversity_metrics(scenarios: List[Any]) -> LocalDiversityResult:
     """
-    核心计算函数：给定一批场景（同一实验），返回 LMS/SED/OSCR。
+    核心计算函数：给定一批场景（同一实验），返回 LMS/SED/OSCR（对应 LRD/SCD/TER）。
     """
     if not scenarios:
         return LocalDiversityResult()
@@ -185,7 +187,7 @@ def compute_local_diversity_metrics(scenarios: List[Any]) -> LocalDiversityResul
     num_seeds = len(seed_to_indices)
     num_valid = len(feature_vectors)
 
-    # 计算 LMS
+    # 计算 LRD（兼容键 lms）
     lms_values: List[float] = []
     for indices in seed_to_indices.values():
         if len(indices) < 2:
@@ -208,7 +210,7 @@ def compute_local_diversity_metrics(scenarios: List[Any]) -> LocalDiversityResul
         if rep_idx >= 0:
             seed_reps.append(norm_matrix[rep_idx])
 
-    # 计算 SED：场景到其 seed 代表的平均距离
+    # 计算 SCD（兼容键 sed）：场景到其 seed 代表的平均距离
     sed_values: List[float] = []
     for key, indices in seed_to_indices.items():
         rep_idx = _select_seed_representative(indices, scenario_ids, norm_matrix)
@@ -219,7 +221,7 @@ def compute_local_diversity_metrics(scenarios: List[Any]) -> LocalDiversityResul
             sed_values.append(float(np.linalg.norm(norm_matrix[idx] - rep_vec)))
     sed = float(np.mean(sed_values)) if sed_values else 0.0
 
-    # 计算 OSCR：基于 seed 代表之间的典型间距 τ
+    # 计算 TER（兼容键 oscr）：基于 seed 代表之间的典型间距 τ
     oscr = 0.0
     if len(seed_reps) >= 2:
         seed_reps_arr = np.vstack(seed_reps)

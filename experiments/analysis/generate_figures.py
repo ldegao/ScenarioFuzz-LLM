@@ -4,8 +4,8 @@ Generate figures for multi-method metrics comparison.
 
 This script consumes an all_methods_results.json (produced by
 experiments.aggregation.collect_results) and generates:
-  - Parameter coverage bar chart
-  - Multi-dimensional radar chart (PC/PEC/TCD/BCM)
+  - PCE bar chart
+  - Multi-dimensional radar chart (pc/pec/tcd/bcm legacy keys -> PCE/BCE/DPE/CCE)
 """
 
 import argparse
@@ -60,7 +60,7 @@ def compute_method_averages(all_results: Dict) -> Dict[str, Dict[str, float]]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate figures (PC bar chart, radar chart) from aggregated metrics."
+        description="Generate figures (PCE bar chart, radar chart) from aggregated metrics."
     )
     parser.add_argument(
         "--results-file",
@@ -93,16 +93,20 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parameter coverage bar chart
+    # Parameter configuration entropy bar chart (PNG + PDF)
     pc_scores = {m: v.get("pc", 0.0) for m, v in method_avgs.items()}
-    pc_fig = out_dir / "pc_coverage.png"
-    plot_parameter_coverage(pc_scores, output_path=str(pc_fig))
-    print(f"[GenerateFigures] Saved PC coverage figure to {pc_fig}")
+    pce_png = out_dir / "pce_coverage.png"
+    pce_pdf = out_dir / "pce_coverage.pdf"
+    plot_parameter_coverage(pc_scores, output_path=str(pce_png))
+    plot_parameter_coverage(pc_scores, output_path=str(pce_pdf))
+    print(f"[GenerateFigures] Saved PCE coverage figures to {pce_png} and {pce_pdf}")
 
-    # Multi-dimensional radar chart
-    radar_fig = out_dir / "metrics_radar.png"
-    plot_comparison_radar(method_avgs, output_path=str(radar_fig))
-    print(f"[GenerateFigures] Saved radar figure to {radar_fig}")
+    # Multi-dimensional radar chart (PNG + PDF)
+    radar_png = out_dir / "metrics_radar.png"
+    radar_pdf = out_dir / "metrics_radar.pdf"
+    plot_comparison_radar(method_avgs, output_path=str(radar_png))
+    plot_comparison_radar(method_avgs, output_path=str(radar_pdf))
+    print(f"[GenerateFigures] Saved radar figures to {radar_png} and {radar_pdf}")
 
 
 if __name__ == "__main__":

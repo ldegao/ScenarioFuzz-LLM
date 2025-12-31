@@ -3,7 +3,7 @@
 Metrics Aggregator
 ------------------
 
-Utilities to aggregate per-scenario metrics (PC, PEC, TCD, BCM) into
+Utilities to aggregate per-scenario metrics (PCE, BCE, DPE, CCE) into
 per-run summaries, and to load/save these metrics in a simple JSON/JSONL
 format.
 

@@ -19,7 +19,7 @@ from .generate_figures import compute_method_averages
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate Markdown/JSON reports from aggregated metrics."
+        description="Generate Markdown/JSON reports from aggregated metrics (PCE/BCE/DPE/CCE)."
     )
     parser.add_argument(
         "--results-file",
